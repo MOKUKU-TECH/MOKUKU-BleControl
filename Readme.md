@@ -15,6 +15,7 @@ The protocol defines two BLE characteristics:
 - [Transfer Message](#2-transfer-message)
 - [Download File from MOKUKU](#3-download-file-from-mokuku)
 - [Upload File to MOKUKU](#4-upload-file-to-mokuku)
+- [Demo](#6-demo)
 - [License](#license)
 
 # 1. Transfer Data
@@ -313,6 +314,33 @@ Available font sizes:
 ```
 28, 48, 60, 80, 120, 140, 160
 ```
+
+# 6. Demo
+
+This example demonstrates how to connect to a MOKUKU device over Bluetooth Low Energy (BLE) and communicate using the MOKUKU protocol.
+The example shows how to:
+
+* scan for BLE devices
+* connect to a MOKUKU device
+* write data packets
+* receive notifications
+* send protocol commands
+
+The implementation is written in Python using Bleak, a cross-platform BLE library.
+
+
+## Create conda environment
+
+```
+conda env create -f monitor_app/ble_ctrl_env.yaml
+```
+
+## Run the demo app
+
+```
+python monitor_app/app.py
+```
+
 
 # License
 
