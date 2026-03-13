@@ -1,4 +1,4 @@
-# Copyright 2025 Mobili Inc. All rights reserved.
+# Copyright 2026 MOKUKU Inc. All rights reserved.
 
 import asyncio
 import struct
@@ -107,6 +107,4 @@ class MokukuMessager:
 
 
 messager = MokukuMessager()
-
-# TODO: do not make it public !!!
 messager.push_string_message(44, "mobili0731")

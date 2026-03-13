@@ -1,4 +1,4 @@
-# Copyright 2025 Mobili Inc. All rights reserved.
+# Copyright 2026 MOKUKU Inc. All rights reserved.
 
 import asyncio
 import sys
@@ -30,7 +30,7 @@ from ble_client import BleClient, BleQtWidget
 from messager import messager
 from common.log import logging
 
-send_realtime_data = False
+send_realtime_data = True
 ble_client_widget = BleQtWidget("mokuku", send_realtime_data)
 MOKUKU_CONFIG_FILE_PATH = "/sd/config.txt"
 
@@ -62,8 +62,8 @@ class SimpleWindow(QWidget):
 
     def add_horizatal_line(self, main_layout):
         horizontal_line = QFrame()
-        horizontal_line.setFrameShape(QFrame.HLine)  # 水平线
-        horizontal_line.setFrameShadow(QFrame.Sunken)  # 凹陷效果（可选）
+        horizontal_line.setFrameShape(QFrame.HLine)
+        horizontal_line.setFrameShadow(QFrame.Sunken)
         main_layout.addSpacing(self.line_height)
         main_layout.addWidget(horizontal_line)
 

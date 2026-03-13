@@ -1,4 +1,4 @@
-# Copyright 2025 Mobili Inc. All rights reserved.
+# Copyright 2026 MOKUKU Inc. All rights reserved.
 
 import threading
 import time
