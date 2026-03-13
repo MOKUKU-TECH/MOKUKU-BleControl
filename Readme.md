@@ -15,7 +15,7 @@ The protocol defines two BLE characteristics:
 - [Transfer Message](#2-transfer-message)
 - [Download File from MOKUKU](#3-download-file-from-mokuku)
 - [Upload File to MOKUKU](#4-upload-file-to-mokuku)
-- [Demo](#6-demo) : **see more detailed doc in 'monitor_app' subfolder.**
+- [Demo](#6-demo) : **see more detailed doc in 'monitor_app' subfolder.** [Python BLE Example](./monitor_app/readme.md)
 - [License](#license)
 
 # 1. Transfer Data
@@ -340,7 +340,7 @@ The example shows how to:
 * send protocol commands
 
 The implementation is written in Python using Bleak, a cross-platform BLE library.
-**See more detailed doc in 'monitor_app' subfolder.**
+**See more detailed doc in 'monitor_app' subfolder.** [Python BLE Example](./monitor_app/readme.md)
 
 ## Create conda environment
 
