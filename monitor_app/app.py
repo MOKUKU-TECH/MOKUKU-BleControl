@@ -1,4 +1,4 @@
-# Copyright 2026 MOKUKU Inc. All rights reserved.
+# Copyright 2025 MOKUKU Inc. All rights reserved.
 
 import asyncio
 import sys
@@ -30,18 +30,21 @@ from ble_client import BleClient, BleQtWidget
 from messager import messager
 from common.log import logging
 
-send_realtime_data = True
+send_realtime_data = False
 ble_client_widget = BleQtWidget("mokuku", send_realtime_data)
 MOKUKU_CONFIG_FILE_PATH = "/sd/config.txt"
 
 
 def create_command_table(widget):
     table_data = [
+        ["6", "reboot"],
         ["10", "left-right swipe"],
         ["43", "left click"],
         ["53", "right click"],
         ["66", "left ota update"],
         ["67", "right ota update"],
+        ["68", "left meme update"],
+        ["69", "right meme update"],
     ]
     table = create_qt_table(["Command", "detail"], table_data, True)
     table.setFixedSize(widget.size().width(), int(widget.size().height() * 0.15))
@@ -80,12 +83,19 @@ class SimpleWindow(QWidget):
         self.wifi_name_input_box.setText("DEEP-RD")
         self.wifi_pw_input_box = QLineEdit(self)
         self.wifi_pw_input_box.setText("07310731")
+
+        self.leftpanels_input_box = QLineEdit(self)
+        self.leftpanels_input_box.setText("1-2-3-4-5")
+        self.rightpanels_input_box = QLineEdit(self)
+        self.rightpanels_input_box.setText("6-7-8-9-10")
         self.wifi_button = QPushButton("Set wifi", self)
         self.wifi_button.clicked.connect(self.set_wifi)
 
         layout_wifi = QHBoxLayout()
         layout_wifi.addWidget(self.wifi_name_input_box)
         layout_wifi.addWidget(self.wifi_pw_input_box)
+        layout_wifi.addWidget(self.leftpanels_input_box)
+        layout_wifi.addWidget(self.rightpanels_input_box)
         layout_wifi.addWidget(self.wifi_button)
 
         # command layout
@@ -143,6 +153,8 @@ class SimpleWindow(QWidget):
         messager.push_string_message(60, "/sd/record")
         messager.push_string_message(61, "0")
         messager.push_string_message(3, "0")
+        messager.push_string_message(4, "0")
+        messager.push_string_message(5, "0")
 
     def download_complete_callback(self):
         if self.downloading_dialog:
@@ -212,6 +224,11 @@ class SimpleWindow(QWidget):
         # send wifi to command list
         messager.push_wifi_name(wifi_name)
         messager.push_wifi_pw(wifi_pw)
+
+        panels_left = self.leftpanels_input_box.text().strip()
+        panels_right = self.rightpanels_input_box.text().strip()
+        messager.push_string_message(50, panels_left)
+        messager.push_string_message(51, panels_right)
         QMessageBox.information(self, "INFO", f"wifi {wifi_name} {wifi_pw} setup.")
 
     # Override closeEvent to add custom logic
