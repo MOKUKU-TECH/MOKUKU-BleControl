@@ -55,11 +55,14 @@ Used for **real-time dashboard updates**.
 
 | Value | Command            |
 | ----- | ------------------ |
+| 6     | Reboot             |
 | 10    | Toggle stereo mode |
 | 43    | Left click         |
 | 53    | Right click        |
 | 66    | Left OTA update    |
 | 67    | Right OTA update   |
+| 68    | Left MEME update   |
+| 69    | Right MEME update  |
 
 ⚠️ **Important Notice**:
 
@@ -114,6 +117,39 @@ Desired backlight = 100% - offset. If you want 85% backlight, set the offset be 
 | ---- | ------------- |
 | 1    | `6`           |
 | 2    | right backlight offset |
+
+## Panels choice setup
+
+```
+typedef enum {
+  PANEL_TYPE_INVALID = 0,
+  PANEL_TYPE_VEL = 1,
+  PANEL_TYPE_RPM = 2,
+  PANEL_TYPE_GRAVITY = 3,
+  PANEL_TYPE_PITCHROLL = 4,
+  PANEL_TYPE_FUEL = 5,
+  PANEL_TYPE_LENGTH = 6,
+  PANEL_TYPE_DURATION = 7,
+  PANEL_TYPE_TRAJECTORY = 8,
+  PANEL_TYPE_TIME = 9,
+  PANEL_TYPE_MUSIC = 10,
+} PANEL_TYPE;
+```
+
+Interval should be "-", e.g. "1-2-3-5", means (vel, rpm, gravity, fuel).
+Need **reboot** to make effect.
+
+| Byte | Value         |
+| ---- | ------------- |
+| 1    | `50`           |
+| 2    | String length |
+| 3..N | left eye panels array |
+
+| Byte | Value         |
+| ---- | ------------- |
+| 1    | `51`           |
+| 2    | String length |
+| 3..N | right eye panels array |
 
 
 ## File System Commands
