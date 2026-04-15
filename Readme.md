@@ -101,6 +101,21 @@ Used for **configuration, WiFi setup, file operations, and system commands**.
 | 3..N | WiFi password |
 
 
+## Backlight Adjustment
+
+Desired backlight = 100% - offset. If you want 85% backlight, set the offset be 15.
+
+| Byte | Value         |
+| ---- | ------------- |
+| 1    | `5`           |
+| 2    | left backlight offset |
+
+| Byte | Value         |
+| ---- | ------------- |
+| 1    | `6`           |
+| 2    | right backlight offset |
+
+
 ## File System Commands
 
 ### List Directory
