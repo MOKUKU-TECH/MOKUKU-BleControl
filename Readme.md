@@ -57,6 +57,7 @@ Used for **real-time dashboard updates**.
 | ----- | ------------------ |
 | 6     | Reboot             |
 | 10    | Toggle stereo mode |
+| 20    | Keep Idling        |
 | 43    | Left click         |
 | 53    | Right click        |
 | 66    | Left OTA update    |
