@@ -63,6 +63,9 @@ Used for **real-time dashboard updates**.
 | 67    | Right OTA update   |
 | 68    | Left MEME update   |
 | 69    | Right MEME update  |
+| >100  | Set MEME (meme id + 100) |
+
+You can set id by send command (meme id + 100), [the meme list could be found here](assets/meme_list.txt).
 
 ⚠️ **Important Notice**:
 
