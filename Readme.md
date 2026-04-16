@@ -57,12 +57,16 @@ Used for **real-time dashboard updates**.
 | ----- | ------------------ |
 | 6     | Reboot             |
 | 10    | Toggle stereo mode |
+| 20    | Keep Idling        |
 | 43    | Left click         |
 | 53    | Right click        |
 | 66    | Left OTA update    |
 | 67    | Right OTA update   |
 | 68    | Left MEME update   |
 | 69    | Right MEME update  |
+| >100  | Set MEME (meme id + 100) |
+
+You can set id by send command (meme id + 100), [the meme list could be found here](assets/meme_list.txt).
 
 ⚠️ **Important Notice**:
 

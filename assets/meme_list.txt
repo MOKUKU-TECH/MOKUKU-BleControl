@@ -1,0 +1,77 @@
+0  idle   Idle
+1  acc    Accelerating
+2  tl     Turn Left
+3  tr     Turn Right
+4  db     Bumpy Ride
+5  diz    Dizzy
+6  ld     Long Driving Warning
+7  dark   Lights Off
+8  slp    Sleeping
+9  dep    Departure
+10 jsc    Emergency Brake
+11 jtl    Sharp Turn Left
+12 jtr    Sharp Turn Right
+13 hs     High-Speed Driving
+14 ld     Celebrate 100km (Waving Flag)
+15 rc     Sunrise
+16 rl     Sunset
+17 33op   Boot Animation
+18 44err  Error
+
+19 ssaut  Autumn
+20 ssspr  Spring
+21 sssum  Summer
+22 sswin  Winter
+
+23 xxangry Angry
+24 xxball  Table Ball Bounce
+25 xxblq   Bowling
+26 xxbor   Dizzy
+27 xxbord  Bored
+28 xxbrk   Blink
+29 xxbug   Flying Bug
+30 xxccwq  Foggy Window
+31 xxcol   Cute
+32 xxconf  Confident
+33 xxcpp   Bubble Pop
+34 xxcxh   Playing Trumpet
+35 xxdzp   Spinning Wheel
+36 xxfdj   Searching
+37 xxhgz   Iced Soda
+38 xxhpy   Happy
+39 xxidle  Double Blink
+40 xxkfw   Starry Eyes
+41 xxmsk   Listening to Music
+42 xxnote  Taking Notes
+43 xxpity  Pitiful
+44 xxrope  Jump Rope
+45 xxsdt   Flashlight
+46 xxsmk   Smirk
+47 xxspace Space Mode
+48 xxsrh   Wearing Glasses / Observing
+49 xxss    Cool Pose
+50 xxtcs   Snake Game
+51 xxthk   Thinking / Questioning
+52 xxtl    Basketball
+53 xxumber Umbrella
+54 xxyq    Acting Cute
+55 xxzei   Sneaky Look
+
+56 zzbb   Blowing Bubbles
+
+57 0101n0 New Year
+58 0101n1 New Year
+59 0101n2 New Year
+60 0101n3 New Year
+
+61 0405e0 Easter
+62 0405e1 Easter
+63 0405e2 Easter
+
+64 0501l0 Labor Day
+65 0501l1 Labor Day
+66 0501l2 Labor Day
+
+67 1225c0 Christmas
+68 1225c1 Christmas
+69 1225c2 Christmas
