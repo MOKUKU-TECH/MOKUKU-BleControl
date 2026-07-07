@@ -15,7 +15,9 @@ The protocol defines two BLE characteristics:
 - [Transfer Message](#2-transfer-message)
 - [Download File from MOKUKU](#3-download-file-from-mokuku)
 - [Upload File to MOKUKU](#4-upload-file-to-mokuku)
+- [DIY Configuration File](#5-diy-configuration-file)
 - [Demo](#6-demo) : **see more detailed doc in 'monitor_app' subfolder.** [Python BLE Example](./monitor_app/readme.md)
+- [Vibe Coding Monitor Mode](#7-vibe-coding-monitor-mode) : reflect a Claude Code session's live status on the velocity panel
 - [License](#license)
 
 # 1. Transfer Data
@@ -155,6 +157,22 @@ Need **reboot** to make effect.
 | 2    | String length |
 | 3..N | right eye panels array |
 
+
+## Status Text Override (VEL panel)
+
+Overrides the velocity panel's speed number with an arbitrary text string (wraps
+across up to ~3 lines). Applies immediately, **no reboot needed**. Used by
+[Vibe Coding Monitor Mode](#7-vibe-coding-monitor-mode) to show a live coding-agent
+status instead of a speed number.
+
+| Byte | Value         |
+| ---- | ------------- |
+| 1    | `52`          |
+| 2    | String length |
+| 3..N | status text (≤31 bytes) |
+
+Sending `string length = 0` clears the override and reverts the panel to the normal
+speed display.
 
 ## File System Commands
 
@@ -413,6 +431,42 @@ python monitor_app/app.py
 | ------- | -------------------- |
 | <video src="https://github.com/user-attachments/assets/7ea8c529-6754-4a41-8ce0-084be0e38f3e">    | <video src="https://github.com/user-attachments/assets/c99fa5b1-677f-428a-a3d0-675f6aeb1d7c">  |
 
+
+# 7. Vibe Coding Monitor Mode
+
+Turns the velocity panel into a live status display for a coding-agent session
+(e.g. Claude Code) — shows what it's doing right now ("Thinking", "Edit: main.c",
+"Waiting", "Idle") using the [Status Text Override](#status-text-override-vel-panel)
+command instead of a speed number.
+
+**See more detailed doc in 'monitor_app' subfolder.** [Vibe Coding Monitor](./monitor_app/readme.md#vibe-coding-monitor-mode)
+
+## 1. Enable the mode on the device
+
+Connect with `monitor_app/app.py` and click **"Enable Vibe Coding Monitor Mode"**. This
+sets the left eye to `1-5` (Velocity(status) + Fuel) and the right eye to `9-7-10`
+(Time + Duration + Music), then reboots the device to apply the new layout.
+
+## 2. Feed it live status from Claude Code
+
+```
+python3 monitor_app/install_hooks.py
+```
+
+Merges Claude Code hooks into `~/.claude/settings.json` (idempotent, only adds
+entries, backs up the previous file). From then on, a small background daemon
+(`monitor_app/vibe_monitor/`, started automatically by the first hook event) tracks
+your Claude Code session and keeps a BLE connection to any device named `mokuku*`,
+pushing status text (command `52`) whenever it changes. No app needs to stay open.
+
+Manual testing without live hooks:
+
+```
+cd monitor_app
+python3 -m vibe_monitor report working --session test1 --project demo --tool Edit --detail main.c
+python3 -m vibe_monitor daemon status
+python3 -m vibe_monitor daemon stop
+```
 
 # License
 

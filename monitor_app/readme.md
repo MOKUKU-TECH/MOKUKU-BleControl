@@ -98,3 +98,57 @@ Example `config.txt` content:
 
 * To reset or recover MOKUKU, send an **empty `config.txt`** file.
 * This clears all custom panels and restores the default display.
+
+## Vibe Coding Monitor Mode
+
+Reflects a Claude Code session's live status ("Thinking", "Edit: main.c",
+"Waiting", "Idle") on the velocity panel, in place of the speed number, via BLE
+command `52` ([Status Text Override](../Readme.md#status-text-override-vel-panel)).
+Requires the firmware in this repo's parent project (`IDF_MOKUKU`) to be built
+with the status-text override support — see
+[../../doc/VIBE_CODING_MONITOR.md](../../doc/VIBE_CODING_MONITOR.md) if you have
+that repo checked out.
+
+### 1. Enable the mode on the device
+
+In `app.py`, click **"Enable Vibe Coding Monitor Mode"**. This sends the panel
+layout (left: `1-5` — Velocity(status) + Fuel, right: `9-7-10` — Time + Duration +
+Music) and reboots the device to apply it. One-time setup; reconnect after the
+device comes back up.
+
+### 2. Wire up Claude Code hooks
+
+```bash
+python3 install_hooks.py            # merges into ~/.claude/settings.json
+python3 install_hooks.py --project  # or into ./.claude/settings.json for just this project
+python3 install_hooks.py --dry-run  # preview the result first without writing anything
+```
+
+Idempotent and safe to re-run — only adds entries, existing hooks (including ones
+for unrelated projects/devices) are left untouched, and the previous settings file
+is backed up to `settings.json.bak`. Undo with `python3 install_hooks.py --remove`.
+
+Once installed, every `SessionStart` / `UserPromptSubmit` / `PreToolUse` /
+`PostToolUse` / `Notification` / `Stop` / `SubagentStop` / `SessionEnd` /
+`PreCompact` hook event calls `vibe_monitor/report_status.py`, which forwards to a
+small background daemon (`vibe_monitor/daemon.py`, started automatically on first
+use). The daemon tracks your Claude Code session, keeps a BLE connection to any
+device named `mokuku*`, and pushes updated status text whenever it changes — no
+app window needs to stay open.
+
+| hook event | status shown |
+|---|---|
+| `SessionStart`, `Stop`, `SessionEnd` | `Idle` |
+| `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `SubagentStop`, `PreCompact` | tool name (+ detail), or `Working` |
+| `Notification` | `Waiting` |
+
+### Manual testing (no live hooks needed)
+
+```bash
+python3 -m vibe_monitor report working --session test1 --project demo --tool Edit --detail main.c
+python3 -m vibe_monitor daemon status   # tracked sessions, connected MOKUKU devices, current text
+python3 -m vibe_monitor daemon stop
+```
+
+Set `MOKUKU_VIBE_MONITOR_DRY_RUN=1` when invoking `vibe_monitor/report_status.py`
+directly to print what would be sent instead of starting the daemon.
