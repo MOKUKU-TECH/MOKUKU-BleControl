@@ -39,6 +39,7 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 
+import install_codex_hooks
 import install_hooks
 from common.log import logging
 from vibe_monitor.protocol import (
@@ -266,7 +267,7 @@ class Backend(QObject):
                 state, text = self.tracker.current_status()
                 summary = {
                     "sessions": [
-                        {"id": sid, "project": s["project"], "status": s["status"]}
+                        {"id": sid, "agent": s.get("agent", "claude"), "project": s["project"], "status": s["status"]}
                         for sid, s in self.tracker.sessions.items()
                     ],
                     "devices": (
@@ -289,7 +290,8 @@ class Backend(QObject):
                 self.tracker.end_session(session_id)
             else:
                 self.tracker.update_session(session_id, msg.get("project"), msg.get("status"), msg.get("tool"),
-                                            msg.get("detail"), pid=msg.get("pid"))
+                                            msg.get("detail"), pid=msg.get("pid"),
+                                            agent=msg.get("agent") or "claude")
             self._emit_sessions_changed()
             self._emit_current_status(source=msg.get("project") or session_id[:8])
         except (json.JSONDecodeError, OSError):
@@ -302,7 +304,7 @@ class Backend(QObject):
         effective_id = self.tracker.effective_session_id()
         items = [(None, "Auto (most recently active)", auto_effective)]
         for sid, s in sorted(self.tracker.sessions.items(), key=lambda kv: -kv[1]["last_seen"]):
-            items.append((sid, f"{s['project']} — {s['status']}", sid == effective_id))
+            items.append((sid, f"[{s.get('agent', 'claude')}] {s['project']} — {s['status']}", sid == effective_id))
         self.sessions_changed.emit(items)
 
     def _emit_current_status(self, source=None):
@@ -430,6 +432,10 @@ class MainWindow(QWidget):
         self.install_hooks_button.clicked.connect(self._on_install_hooks_clicked)
         layout.addWidget(self.install_hooks_button)
 
+        self.install_codex_hooks_button = QPushButton("Install Codex Hooks", self)
+        self.install_codex_hooks_button.clicked.connect(self._on_install_codex_hooks_clicked)
+        layout.addWidget(self.install_codex_hooks_button)
+
         layout.addWidget(self._hline())
 
         log_label = QLabel("Activity Log")
@@ -532,6 +538,25 @@ class MainWindow(QWidget):
             message = f"Failed to install Claude Code hooks: {exc}"
         self._on_log_message(f"{datetime.now().strftime('%H:%M:%S')}  {message}")
         QMessageBox.information(self, "Claude Code Hooks", message)
+
+    def _on_install_codex_hooks_clicked(self):
+        # Global (~/.codex/hooks.json), matching the Claude button's choice
+        # and plain `python3 install_codex_hooks.py` from the CLI.
+        path = install_codex_hooks.hooks_path(project=False)
+        try:
+            config = install_codex_hooks.load_hooks(path)
+            count = install_codex_hooks.install(config, sys.executable)
+            if count:
+                install_hooks.write_settings(path, config)
+                message = (f"Installed {count} hook entr{'y' if count == 1 else 'ies'} into {path}.\n\n"
+                           "Codex requires you to manually trust new hooks before they run - "
+                           "open the Codex CLI and run /hooks to review and approve them.")
+            else:
+                message = f"Codex hooks already installed ({path})"
+        except OSError as exc:
+            message = f"Failed to install Codex hooks: {exc}"
+        self._on_log_message(f"{datetime.now().strftime('%H:%M:%S')}  {message}")
+        QMessageBox.information(self, "Codex Hooks", message)
 
     def closeEvent(self, event):
         self.backend.disconnect()

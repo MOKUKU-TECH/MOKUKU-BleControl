@@ -142,21 +142,23 @@ def format_status(info):
 
 
 class SessionTracker:
-    """Tracks every active Claude Code session reported over the socket by
-    report_status.py, and picks which one's status to show/send. Multiple
-    sessions can be active at once (e.g. several Claude Code windows) - by
-    default the most-recently-active one is shown/sent, but select_session()
-    lets the user pin a specific one instead."""
+    """Tracks every active coding-assistant session reported over the socket
+    by report_status.py (Claude Code and/or Codex CLI - see its --agent
+    flag), and picks which one's status to show/send. Multiple sessions can
+    be active at once (e.g. several Claude Code/Codex windows) - by default
+    the most-recently-active one is shown/sent, but select_session() lets
+    the user pin a specific one instead."""
 
     def __init__(self):
-        self.sessions = {}   # session_id -> {project, status, tool, detail, last_seen, pid}
+        self.sessions = {}   # session_id -> {agent, project, status, tool, detail, last_seen, pid}
         self.selected_session_id = None  # None = automatic (most recently active)
 
-    def update_session(self, session_id, project, status, tool, detail, pid=None):
+    def update_session(self, session_id, project, status, tool, detail, pid=None, agent="claude"):
         existing = self.sessions.get(session_id)
         if existing and existing.get("project"):
             project = existing["project"]
         self.sessions[session_id] = {
+            "agent": agent,
             "project": project or session_id[:8],
             "status": status,
             "tool": tool or "",

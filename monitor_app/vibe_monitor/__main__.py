@@ -15,7 +15,8 @@ VALID_STATUSES = ("idle", "working", "waiting")
 
 
 def cmd_report(args):
-    ok = ipc_client.send(args.session, project=args.project, status=args.status, tool=args.tool, detail=args.detail)
+    ok = ipc_client.send(args.session, project=args.project, status=args.status, tool=args.tool, detail=args.detail,
+                         agent=args.agent)
     if not ok:
         print("failed to reach vibe_monitor_app.py - is it running?", file=sys.stderr)
         return 1
@@ -31,7 +32,7 @@ def cmd_status(_args):
 
     print(f"sessions ({len(summary['sessions'])}):")
     for s in summary["sessions"]:
-        print(f"  {s['id'][:8]}  {s['project']:<20} {s['status']}")
+        print(f"  {s['id'][:8]}  [{s.get('agent', 'claude')}] {s['project']:<20} {s['status']}")
 
     print(f"devices ({len(summary['devices'])}):")
     for d in summary["devices"]:
@@ -52,6 +53,7 @@ def main():
     report_p.add_argument("--project", default="test-project")
     report_p.add_argument("--tool", default=None)
     report_p.add_argument("--detail", default=None)
+    report_p.add_argument("--agent", default="claude", choices=("claude", "codex"))
     report_p.set_defaults(func=cmd_report)
 
     status_p = sub.add_parser("status", help="query the running app's tracked sessions/devices")

@@ -32,16 +32,19 @@ def _send_message(message, timeout=_CONNECT_TIMEOUT, expect_reply=False):
         return None if expect_reply else False
 
 
-def send(session_id, project=None, status=None, tool=None, detail=None, ended=False, pid=None):
-    """Returns True if the message was delivered to the app."""
+def send(session_id, project=None, status=None, tool=None, detail=None, ended=False, pid=None, agent="claude"):
+    """Returns True if the message was delivered to the app. `agent`
+    identifies which coding assistant this session belongs to (e.g. "claude",
+    "codex") - report_status.py is shared by both, tagged via its --agent flag."""
     if os.environ.get("MOKUKU_VIBE_MONITOR_DRY_RUN"):
-        print(f"[dry-run] would send: session={session_id} project={project} status={status} "
+        print(f"[dry-run] would send: session={session_id} agent={agent} project={project} status={status} "
               f"tool={tool} detail={detail} ended={ended} pid={pid}")
         return True
 
     message = {"session_id": session_id, "ended": ended}
     if not ended:
-        message.update({"project": project, "status": status, "tool": tool, "detail": detail, "pid": pid})
+        message.update({"project": project, "status": status, "tool": tool, "detail": detail, "pid": pid,
+                        "agent": agent})
     return bool(_send_message(message))
 
 

@@ -101,9 +101,9 @@ Example `config.txt` content:
 
 ## Vibe Coding Monitor Mode
 
-Reflects a Claude Code session's live status ("Thinking", "Edit: main.c",
-"Waiting", "Idle") on a dedicated VibeCoding panel (`PANEL_TYPE_VIBECODING`, id
-`11`), via BLE command `52`
+Reflects a Claude Code and/or Codex CLI session's live status ("Thinking",
+"Edit: main.c", "Waiting", "Idle") on a dedicated VibeCoding panel
+(`PANEL_TYPE_VIBECODING`, id `11`), via BLE command `52`
 ([VibeCoding Panel Status Text](../Readme.md#vibecoding-panel-status-text)).
 Requires the firmware in this repo's parent project (`IDF_MOKUKU`) to be built
 with the VibeCoding panel — see
@@ -146,6 +146,26 @@ Once installed, every `SessionStart` / `UserPromptSubmit` / `PreToolUse` /
 `PreCompact` hook event calls `vibe_monitor/report_status.py`, which forwards
 the status over a local socket to `vibe_monitor_app.py` (see below) - if
 that app isn't running, this is a silent no-op.
+
+### 2b. Optional: also wire up Codex CLI hooks
+
+```bash
+python3 install_codex_hooks.py            # merges into ~/.codex/hooks.json
+python3 install_codex_hooks.py --project  # or into ./.codex/hooks.json for just this project
+```
+
+Same idempotent merge/backup/`--dry-run`/`--remove` as `install_hooks.py`,
+or click **"Install Codex Hooks"** in `vibe_monitor_app.py`. `report_status.py`
+handles both agents - Codex's own hook system is a close port of Claude
+Code's, invoked here with `--agent codex --event <Name>` baked into the
+command rather than trusted from Codex's own payload.
+
+**Codex additionally requires manual trust**: after installing, run `/hooks`
+inside the Codex CLI to review and approve these entries - unlike Claude
+Code, they don't take effect just by being written to the config file. This
+is a newer, still-evolving Codex feature; if nothing shows up, check
+`/hooks` first and compare against
+[developers.openai.com/codex/hooks](https://developers.openai.com/codex/hooks).
 
 | hook event | status shown |
 |---|---|
@@ -220,7 +240,8 @@ the panel expects to keep hearing; after 8s of silence it falls back to
 
 ```bash
 python3 -m vibe_monitor report working --session test1 --project demo --tool Edit --detail main.c
-python3 -m vibe_monitor status   # tracked sessions, connected MOKUKU device, current state/text
+python3 -m vibe_monitor report working --session test2 --project demo --tool shell --agent codex
+python3 -m vibe_monitor status   # tracked sessions (tagged by agent), connected MOKUKU device, current state/text
 ```
 
 Set `MOKUKU_VIBE_MONITOR_DRY_RUN=1` when invoking `vibe_monitor/report_status.py`
