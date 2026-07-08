@@ -102,19 +102,28 @@ Example `config.txt` content:
 ## Vibe Coding Monitor Mode
 
 Reflects a Claude Code session's live status ("Thinking", "Edit: main.c",
-"Waiting", "Idle") on the velocity panel, in place of the speed number, via BLE
-command `52` ([Status Text Override](../Readme.md#status-text-override-vel-panel)).
+"Waiting", "Idle") on a dedicated VibeCoding panel (`PANEL_TYPE_VIBECODING`, id
+`11`), via BLE command `52`
+([VibeCoding Panel Status Text](../Readme.md#vibecoding-panel-status-text)).
 Requires the firmware in this repo's parent project (`IDF_MOKUKU`) to be built
-with the status-text override support — see
+with the VibeCoding panel — see
 [../../doc/VIBE_CODING_MONITOR.md](../../doc/VIBE_CODING_MONITOR.md) if you have
 that repo checked out.
 
 ### 1. Enable the mode on the device
 
 In `app.py`, click **"Enable Vibe Coding Monitor Mode"**. This sends the panel
-layout (left: `1-5` — Velocity(status) + Fuel, right: `9-7-10` — Time + Duration +
-Music) and reboots the device to apply it. One-time setup; reconnect after the
-device comes back up.
+layout (left: `11-5` — VibeCoding + Fuel, right: `9-7-10` — Time + Duration +
+Music), disables OBD/canbus BLE scanning (command `35`, falls back to GPS mode),
+and reboots the device to apply it. One-time setup; reconnect after the device
+comes back up.
+
+Disabling OBD scanning avoids a real failure mode: the left eye's BLE *client*
+role (which normally scans for an OBD/ELM327 device) and its BLE *server* role
+(the phone/host connection) share one radio, and toggling between them on every
+connect/disconnect can produce a connect → disconnect → reconnect loop that
+fights whatever's trying to hold the host connection — a phone, `app.py`, or
+the `vibe_monitor` daemon below.
 
 ### 2. Wire up Claude Code hooks
 
@@ -132,9 +141,12 @@ Once installed, every `SessionStart` / `UserPromptSubmit` / `PreToolUse` /
 `PostToolUse` / `Notification` / `Stop` / `SubagentStop` / `SessionEnd` /
 `PreCompact` hook event calls `vibe_monitor/report_status.py`, which forwards to a
 small background daemon (`vibe_monitor/daemon.py`, started automatically on first
-use). The daemon tracks your Claude Code session, keeps a BLE connection to any
-device named `mokuku*`, and pushes updated status text whenever it changes — no
-app window needs to stay open.
+use). The daemon tracks your Claude Code session, keeps a BLE connection to the
+closest device named `mokuku*` (by RSSI, in case multiple units are around),
+and pushes updated status text whenever it changes — no app window needs to
+stay open. It only scans while disconnected (an active scan competes with a
+live GATT connection for the radio), so it won't switch to a closer unit that
+shows up mid-connection - only on reconnect.
 
 | hook event | status shown |
 |---|---|

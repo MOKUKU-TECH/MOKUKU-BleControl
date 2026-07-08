@@ -251,9 +251,11 @@ class SimpleWindow(QWidget):
         reply = QMessageBox.question(
             self,
             "Enable Vibe Coding Monitor Mode",
-            "This sets left eye panels to Velocity(status)+Fuel and right eye "
-            "panels to Time+Duration+Music, then reboots the device to apply "
-            "the new layout. Run `install_hooks.py` in this folder (see "
+            "This sets left eye panels to VibeCoding(status)+Fuel and right eye "
+            "panels to Time+Duration+Music, disables OBD/canbus BLE scanning "
+            "(falls back to GPS mode - avoids the OBD scan competing with the "
+            "phone/host BLE connection), then reboots the device to apply the "
+            "new layout. Run `install_hooks.py` in this folder (see "
             "vibe_monitor/README.md) so Claude Code keeps the status text "
             "updated after reconnecting. Continue?",
             QMessageBox.Yes | QMessageBox.No,
@@ -261,8 +263,9 @@ class SimpleWindow(QWidget):
         )
         if reply != QMessageBox.Yes:
             return
-        messager.push_string_message(50, "1-5")
+        messager.push_string_message(50, "11-5")  # PANEL_TYPE_VIBECODING + PANEL_TYPE_FUEL
         messager.push_string_message(51, "9-7-10")
+        messager.push_command(35)  # DisableBleScan(): stop OBD/canbus scanning, fall back to GPS mode
         messager.push_reboot()
         QMessageBox.information(
             self, "INFO", "Vibe Coding Monitor Mode set. Device is rebooting - reconnect after it comes back up."

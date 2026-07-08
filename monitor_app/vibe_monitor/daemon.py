@@ -1,11 +1,12 @@
 """Persistent daemon that reflects Claude Code's status onto a MOKUKU device.
 
 Tracks every active Claude Code session (reported over a Unix socket by
-report_status.py) and maintains a BLE connection to every discoverable
-MOKUKU device (name prefix "mokuku"), pushing the most-recently-active
-session's status as a short text string via BLE message id 52, which
-overrides the velocity panel's number with that text (see
-IDF_SHARED/panel/panel_car.c:SetSpeedPanelStatusText and
+report_status.py) and maintains a BLE connection to the single CLOSEST
+discoverable MOKUKU device (name prefix "mokuku", picked by RSSI - multiple
+units may be around, e.g. someone else's), pushing the most-recently-active
+session's status as a short text string via BLE message id 52, which sets the
+text on the dedicated VibeCoding panel (see
+IDF_SHARED/panel/panel_vibecoding.c:SetVibeCodingStatusText and
 doc/BLE_CONTROL.md). Unlike a paired/bonded peripheral, MOKUKU is a plain
 unauthenticated BLE server, so devices are found via an active scan
 rather than the OS's paired-devices list - no pairing step is needed.
@@ -18,6 +19,7 @@ import fcntl
 import json
 import os
 import signal
+import struct
 import subprocess
 import sys
 import tempfile
@@ -26,6 +28,7 @@ from pathlib import Path
 
 from bleak import BleakClient, BleakScanner
 
+CHARACTERISTIC_UUID_MAIN = "beb5483e-36e1-4688-b7f5-ea07361b26a8"
 CHARACTERISTIC_UUID_ACK = "d222e154-1a80-4e71-9a63-2aa2c0ce0a8c"
 DEVICE_NAME_PREFIX = "mokuku"
 STATUS_TEXT_MAX_BYTES = 31  # firmware STATUS_TEXT_BUFFER_SIZE (32) minus the null terminator
@@ -49,12 +52,57 @@ def _pid_alive(pid):
         return False
 
 
-def encode_status_message(text):
-    payload = text.encode("utf-8")[:STATUS_TEXT_MAX_BYTES]
-    return bytes([52, len(payload)]) + payload
+def encode_time_sync_message():
+    """The 11-byte Transfer Data packet (id=1) that MyHostCallbacks::onMessageData
+    (ble_messager.cc) reads as VEL/RPM/GAS/timestamp/backlight/command - sent
+    here purely to carry a real Unix timestamp into SystemStateSetRealTime()
+    on every daemon refresh tick, independent of whether the status text
+    changed. VEL=255 and GAS=0 are this firmware's existing "no data"
+    sentinels (data_valid_ = current_vel_ < 255; gas_valid() = gas_ > 0), so
+    this doesn't make the speed/fuel panels believe they have real vehicle
+    data; backlight=0 and command=0 are no-ops on the firmware side.
+    """
+    vel, rpm_a, rpm_b, gas = 255, 0, 0, 0
+    timestamp = int(time.time())
+    backlight, command = 0, 0
+    return bytes([1, vel, rpm_a, rpm_b, gas]) + struct.pack("<I", timestamp) + bytes([backlight, command])
+
+
+def _truncate_with_ellipsis(text, max_bytes):
+    """Truncates `text` to fit max_bytes once UTF-8 encoded, appending "..."
+    so a cut-off file path/command doesn't look like the whole message (a
+    firmware log of a truncated message with no marker looked exactly like
+    a shorter, complete one). If `text` is "main\ndetail" shaped (see
+    format_status), only the detail half is cut - the short main status
+    word always survives intact."""
+    raw = text.encode("utf-8")
+    if len(raw) <= max_bytes:
+        return raw
+
+    ellipsis = b"..."
+    if "\n" in text:
+        main, _, detail = text.partition("\n")
+        main_bytes = main.encode("utf-8") + b"\n"
+        budget = max_bytes - len(main_bytes)
+        if budget > len(ellipsis):
+            return main_bytes + detail.encode("utf-8")[:budget - len(ellipsis)] + ellipsis
+        # no room left for main + ellipsis - fall through to flat truncation
+
+    return raw[:max_bytes - len(ellipsis)] + ellipsis
+
+
+# Matches VIBECODING_STATE in IDF_SHARED/panel/panel_vibecoding.c - drives the
+# panel's background color/blink on the device.
+STATE_IDLE, STATE_WORKING, STATE_WAITING = 0, 1, 2
+
+
+def encode_status_message(state, text):
+    payload = _truncate_with_ellipsis(text, STATUS_TEXT_MAX_BYTES)
+    return bytes([52, state, len(payload)]) + payload
 
 
 def format_status(info):
+    """Returns (state, text)."""
     status = info.get("status")
     if status == "working":
         tool = (info.get("tool") or "").strip()
@@ -65,11 +113,10 @@ def format_status(info):
             text = tool
         else:
             text = "Working"
+        return STATE_WORKING, text
     elif status == "waiting":
-        text = "Waiting"
-    else:
-        text = "Idle"
-    return text[:STATUS_TEXT_MAX_BYTES]
+        return STATE_WAITING, "Waiting"
+    return STATE_IDLE, "Idle"
 
 
 class Daemon:
@@ -118,9 +165,10 @@ class Daemon:
         for sid in dead:
             del self.sessions[sid]
 
-    def current_status_text(self):
+    def current_status(self):
+        """Returns (state, text)."""
         if not self.sessions:
-            return "Idle"
+            return STATE_IDLE, "Idle"
         most_recent = max(self.sessions.values(), key=lambda s: s["last_seen"])
         return format_status(most_recent)
 
@@ -137,6 +185,7 @@ async def handle_client(daemon, reader, writer):
         cmd = msg.get("cmd")
 
         if cmd == "status":
+            current_state, current_text = daemon.current_status()
             summary = {
                 "sessions": [
                     {"id": sid, "project": s["project"], "status": s["status"]}
@@ -146,7 +195,8 @@ async def handle_client(daemon, reader, writer):
                     {"address": addr, "connected": entry.get("client") is not None and entry["client"].is_connected}
                     for addr, entry in daemon.devices.items()
                 ],
-                "current_text": daemon.current_status_text(),
+                "current_state": current_state,
+                "current_text": current_text,
             }
             writer.write((json.dumps(summary) + "\n").encode())
             await writer.drain()
@@ -178,12 +228,36 @@ async def run_server(daemon):
         await server.serve_forever()
 
 
-async def discover_mokuku_addresses(timeout=SCAN_TIMEOUT_SECONDS):
+async def discover_mokuku_devices(timeout=SCAN_TIMEOUT_SECONDS):
+    """Returns [(address, rssi), ...] for every discovered mokuku* device."""
     scanner = BleakScanner()
     await scanner.start()
     await asyncio.sleep(timeout)
     await scanner.stop()
-    return [d.address for d in scanner.discovered_devices if d.name and d.name.startswith(DEVICE_NAME_PREFIX)]
+    return [(d.address, d.rssi) for d in scanner.discovered_devices
+            if d.name and d.name.startswith(DEVICE_NAME_PREFIX)]
+
+
+async def _bluetoothctl_connect(address, timeout=15.0):
+    """bleak's own BlueZ D-Bus connect() has a known-flaky interaction on
+    Linux (github.com/hbldh/bleak#1364 and others: connects then silently
+    drops, times out client-side while the connection actually succeeds
+    moments later at the BlueZ level, or the whole D-Bus call just hangs
+    without honoring asyncio's timeout/cancellation) - `bluetoothctl
+    connect` against the same bluetoothd doesn't have this problem, so it
+    does the actual radio connection; bleak is only used afterwards for
+    GATT reads/writes on the now-established link. A hung `client.connect()`
+    previously wedged this daemon's whole event loop (including the Unix
+    socket server), making it unresponsive."""
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "bluetoothctl", "connect", address,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+        )
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        return proc.returncode == 0 and b"Connection successful" in stdout
+    except (asyncio.TimeoutError, OSError):
+        return False
 
 
 async def manage_device(daemon, address):
@@ -193,25 +267,52 @@ async def manage_device(daemon, address):
     daemon.devices[address] = entry
     success = False
     try:
-        client = BleakClient(address, disconnected_callback=lambda _c: daemon.devices.pop(address, None))
-        await asyncio.wait_for(client.connect(), timeout=15.0)
-        if not client.is_connected:
+        if not await _bluetoothctl_connect(address):
             return
+
+        client = BleakClient(address, disconnected_callback=lambda _c: daemon.devices.pop(address, None))
+        try:
+            await asyncio.wait_for(client.connect(timeout=20), timeout=25.0)
+        except Exception:
+            # As above: bleak's client-side connect() can time out while
+            # BlueZ's underlying connection actually completed moments
+            # later - don't discard it just because our wait gave up first.
+            if not client.is_connected:
+                return
+
         entry["client"] = client
         daemon.touch()
         success = True
-    except Exception:
-        return
     finally:
         if not success:
             daemon.devices.pop(address, None)
 
 
+async def _drop_device(daemon, address):
+    entry = daemon.devices.pop(address, None)
+    client = entry.get("client") if entry else None
+    if client:
+        try:
+            await asyncio.wait_for(client.disconnect(), timeout=5.0)
+        except Exception:
+            pass
+
+
 async def reconnect_loop(daemon):
     while True:
-        for address in await discover_mokuku_addresses():
-            if address not in daemon.devices:
-                asyncio.create_task(manage_device(daemon, address))
+        # Only scan while not already connected to something - an active BLE
+        # scan and a live GATT connection compete for the same radio, and
+        # scanning on every cycle (previously: unconditionally, every 8s,
+        # forever) was adding real latency/jitter to refresh_loop's status
+        # writes on the already-open connection. This means we no longer
+        # auto-switch to a closer unit that appears mid-connection (rare;
+        # multiple-MOKUKU-nearby is an edge case), only reconnect once
+        # disconnected.
+        if not daemon.devices:
+            discovered = await discover_mokuku_devices()
+            if discovered:
+                closest_address, _ = max(discovered, key=lambda item: item[1])
+                asyncio.create_task(manage_device(daemon, closest_address))
         await asyncio.sleep(RECONNECT_INTERVAL_SECONDS)
 
 
@@ -220,26 +321,35 @@ async def refresh_loop(daemon):
     while True:
         await asyncio.sleep(REFRESH_INTERVAL_SECONDS)
         daemon.prune_stale_sessions()
-        text = daemon.current_status_text()
-        message = encode_status_message(text)
+        state, text = daemon.current_status()
+        status_message = encode_status_message(state, text)
 
         for address, entry in list(daemon.devices.items()):
             client = entry.get("client")
             if not client or not client.is_connected:
                 continue
-            if last_sent.get(address) == text:
-                continue
+
+            # Time sync every tick, independent of whether the status text
+            # changed, so the clock stays fresh even during long idle
+            # stretches - not just at the moment something changes.
             try:
-                await asyncio.wait_for(client.write_gatt_char(CHARACTERISTIC_UUID_ACK, message), timeout=10.0)
-                last_sent[address] = text
+                await asyncio.wait_for(
+                    client.write_gatt_char(CHARACTERISTIC_UUID_MAIN, encode_time_sync_message()), timeout=10.0)
                 daemon.touch()
             except Exception:
-                daemon.devices.pop(address, None)
                 last_sent.pop(address, None)
-                try:
-                    await asyncio.wait_for(client.disconnect(), timeout=5.0)
-                except Exception:
-                    pass
+                await _drop_device(daemon, address)
+                continue
+
+            if last_sent.get(address) == (state, text):
+                continue
+            try:
+                await asyncio.wait_for(client.write_gatt_char(CHARACTERISTIC_UUID_ACK, status_message), timeout=10.0)
+                last_sent[address] = (state, text)
+                daemon.touch()
+            except Exception:
+                last_sent.pop(address, None)
+                await _drop_device(daemon, address)
 
         if daemon.is_idle() and time.time() - daemon.last_activity > TOTAL_IDLE_EXIT_SECONDS:
             os._exit(0)

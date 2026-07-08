@@ -10,6 +10,7 @@ import sys
 from . import daemon, ipc_client
 
 VALID_STATUSES = ("idle", "working", "waiting")
+STATE_NAMES = {daemon.STATE_IDLE: "idle", daemon.STATE_WORKING: "working", daemon.STATE_WAITING: "waiting"}
 
 
 def cmd_report(args):
@@ -44,7 +45,8 @@ def cmd_daemon(args):
     for d in summary["devices"]:
         print(f"  {d['address']}  {'connected' if d['connected'] else 'disconnected'}")
 
-    print(f"current text sent to MOKUKU: {summary['current_text']!r}")
+    state_name = STATE_NAMES.get(summary.get("current_state"), summary.get("current_state"))
+    print(f"current state/text sent to MOKUKU: {state_name} / {summary['current_text']!r}")
     return 0
 
 

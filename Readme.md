@@ -60,6 +60,8 @@ Used for **real-time dashboard updates**.
 | 6     | Reboot             |
 | 10    | Toggle stereo mode |
 | 20    | Keep Idling        |
+| 34    | Enable OBD/canbus BLE scan (left eye) |
+| 35    | Disable OBD/canbus BLE scan, fall back to GPS mode (left eye) |
 | 43    | Left click         |
 | 53    | Right click        |
 | 66    | Left OTA update    |
@@ -139,6 +141,7 @@ typedef enum {
   PANEL_TYPE_TRAJECTORY = 8,
   PANEL_TYPE_TIME = 9,
   PANEL_TYPE_MUSIC = 10,
+  PANEL_TYPE_VIBECODING = 11,
 } PANEL_TYPE;
 ```
 
@@ -158,12 +161,13 @@ Need **reboot** to make effect.
 | 3..N | right eye panels array |
 
 
-## Status Text Override (VEL panel)
+## VibeCoding Panel Status Text
 
-Overrides the velocity panel's speed number with an arbitrary text string (wraps
-across up to ~3 lines). Applies immediately, **no reboot needed**. Used by
+Sets the text shown on the dedicated VibeCoding panel (`PANEL_TYPE_VIBECODING`,
+id `11` - see [Panels choice setup](#panels-choice-setup)), wrapping across up to
+~3 lines. Applies immediately, **no reboot needed**. Used by
 [Vibe Coding Monitor Mode](#7-vibe-coding-monitor-mode) to show a live coding-agent
-status instead of a speed number.
+status.
 
 | Byte | Value         |
 | ---- | ------------- |
@@ -171,8 +175,7 @@ status instead of a speed number.
 | 2    | String length |
 | 3..N | status text (≤31 bytes) |
 
-Sending `string length = 0` clears the override and reverts the panel to the normal
-speed display.
+`string length = 0` is ignored - this panel has no numeric fallback to revert to.
 
 ## File System Commands
 
@@ -434,18 +437,21 @@ python monitor_app/app.py
 
 # 7. Vibe Coding Monitor Mode
 
-Turns the velocity panel into a live status display for a coding-agent session
-(e.g. Claude Code) — shows what it's doing right now ("Thinking", "Edit: main.c",
-"Waiting", "Idle") using the [Status Text Override](#status-text-override-vel-panel)
-command instead of a speed number.
+Adds a dedicated VibeCoding panel (`PANEL_TYPE_VIBECODING`, id `11`) showing live
+status for a coding-agent session (e.g. Claude Code) — what it's doing right now
+("Thinking", "Edit: main.c", "Waiting", "Idle") — set via the
+[VibeCoding Panel Status Text](#vibecoding-panel-status-text) command.
 
 **See more detailed doc in 'monitor_app' subfolder.** [Vibe Coding Monitor](./monitor_app/readme.md#vibe-coding-monitor-mode)
 
 ## 1. Enable the mode on the device
 
 Connect with `monitor_app/app.py` and click **"Enable Vibe Coding Monitor Mode"**. This
-sets the left eye to `1-5` (Velocity(status) + Fuel) and the right eye to `9-7-10`
-(Time + Duration + Music), then reboots the device to apply the new layout.
+sets the left eye to `11-5` (VibeCoding + Fuel) and the right eye to `9-7-10`
+(Time + Duration + Music), disables OBD/canbus BLE scanning (command `35`, falls
+back to GPS mode — otherwise the left eye's background OBD-scan role fights
+whatever's holding the phone/host connection), then reboots the device to apply
+the new layout.
 
 ## 2. Feed it live status from Claude Code
 
@@ -456,8 +462,9 @@ python3 monitor_app/install_hooks.py
 Merges Claude Code hooks into `~/.claude/settings.json` (idempotent, only adds
 entries, backs up the previous file). From then on, a small background daemon
 (`monitor_app/vibe_monitor/`, started automatically by the first hook event) tracks
-your Claude Code session and keeps a BLE connection to any device named `mokuku*`,
-pushing status text (command `52`) whenever it changes. No app needs to stay open.
+your Claude Code session and keeps a BLE connection to the closest device named
+`mokuku*` (picked by RSSI, in case multiple units are around), pushing status text
+(command `52`) whenever it changes. No app needs to stay open.
 
 Manual testing without live hooks:
 
