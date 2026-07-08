@@ -132,10 +132,14 @@ def format_status(info):
 
 class SessionTracker:
     """Tracks every active Claude Code session reported over the socket by
-    report_status.py, and picks which one's status to show/send."""
+    report_status.py, and picks which one's status to show/send. Multiple
+    sessions can be active at once (e.g. several Claude Code windows) - by
+    default the most-recently-active one is shown/sent, but select_session()
+    lets the user pin a specific one instead."""
 
     def __init__(self):
         self.sessions = {}   # session_id -> {project, status, tool, detail, last_seen, pid}
+        self.selected_session_id = None  # None = automatic (most recently active)
 
     def update_session(self, session_id, project, status, tool, detail, pid=None):
         existing = self.sessions.get(session_id)
@@ -172,9 +176,27 @@ class SessionTracker:
         for sid in dead:
             del self.sessions[sid]
 
+    def select_session(self, session_id):
+        """session_id=None reverts to automatic (most recently active)."""
+        self.selected_session_id = session_id
+
+    def is_auto_selected(self):
+        """True if there's no valid pinned session, i.e. current_status()
+        is falling back to "most recently active" rather than a user pick."""
+        return not (self.selected_session_id and self.selected_session_id in self.sessions)
+
+    def effective_session_id(self):
+        """The session_id current_status() is actually using, or None if
+        there are no sessions at all."""
+        if self.selected_session_id and self.selected_session_id in self.sessions:
+            return self.selected_session_id
+        if not self.sessions:
+            return None
+        return max(self.sessions.items(), key=lambda kv: kv[1]["last_seen"])[0]
+
     def current_status(self):
         """Returns (state, text)."""
-        if not self.sessions:
+        session_id = self.effective_session_id()
+        if session_id is None:
             return STATE_IDLE, "Idle"
-        most_recent = max(self.sessions.values(), key=lambda s: s["last_seen"])
-        return format_status(most_recent)
+        return format_status(self.sessions[session_id])

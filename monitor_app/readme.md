@@ -175,6 +175,15 @@ automatically - you always know whether it's actually connected. It's not
 launched by the hooks either; run it yourself each session, and it refuses
 to start a second instance while one is already running (same socket).
 
+Connect and Disconnect both back up bleak's own D-Bus calls with a
+`bluetoothctl connect`/`disconnect` subprocess call, since bleak's calls can
+silently hang or fail on Linux/BlueZ. This matters most on disconnect - if
+the radio-level link stays up while the app thinks it's disconnected, MOKUKU
+never resumes advertising and won't show up in the next scan. Scanning uses
+`async with BleakScanner()` so an interrupted scan can't leave the adapter
+stuck and blocking future scans, and scan failures are logged rather than
+leaving the UI stuck on "Scanning...".
+
 ### Manual testing (app must already be running)
 
 ```bash

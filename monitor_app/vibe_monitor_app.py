@@ -75,13 +75,35 @@ async def _bluetoothctl_connect(address, timeout=15.0):
         return False
 
 
+async def _bluetoothctl_disconnect(address, timeout=10.0):
+    """Symmetric with _bluetoothctl_connect: bleak's own disconnect() can be
+    just as flaky on Linux/BlueZ as its connect() - if it silently fails or
+    times out, our client-side "disconnected" state doesn't match reality,
+    the radio link stays up, and MOKUKU (still thinking something's
+    connected) never resumes BLE advertising - making it invisible to any
+    later scan even though the app itself looks disconnected. Running
+    `bluetoothctl disconnect` afterwards forces the actual radio-level
+    teardown regardless of whether bleak's own call succeeded."""
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "bluetoothctl", "disconnect", address,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+        )
+        await asyncio.wait_for(proc.communicate(), timeout=timeout)
+    except (asyncio.TimeoutError, OSError):
+        pass
+
+
 async def discover_mokuku_devices(timeout=SCAN_TIMEOUT_SECONDS):
     """Returns [(address, name, rssi), ...] for every discovered mokuku* device."""
-    scanner = BleakScanner()
-    await scanner.start()
-    await asyncio.sleep(timeout)
-    await scanner.stop()
-    return [(d.address, d.name, d.rssi) for d in scanner.discovered_devices
+    # async with (rather than manual start()/stop()) guarantees stop() runs
+    # even if something above raises or the sleep is cancelled - otherwise an
+    # unstopped discovery session can leave the adapter stuck "discovering"
+    # and silently break every scan after it, with nothing visibly wrong.
+    async with BleakScanner() as scanner:
+        await asyncio.sleep(timeout)
+        devices = list(scanner.discovered_devices)
+    return [(d.address, d.name, d.rssi) for d in devices
             if d.name and d.name.startswith(DEVICE_NAME_PREFIX)]
 
 
@@ -95,6 +117,7 @@ class Backend(QObject):
     connection_changed = pyqtSignal(str, str)     # (state, address); state: disconnected/scanning/connecting/connected
     log_message = pyqtSignal(str)
     claude_status_changed = pyqtSignal(str, str)  # (state_name, text)
+    sessions_changed = pyqtSignal(list)           # [(session_id_or_None, label, is_effective), ...]; None = "Auto" entry
 
     def __init__(self):
         super().__init__()
@@ -131,12 +154,25 @@ class Backend(QObject):
     def disconnect(self):
         asyncio.run_coroutine_threadsafe(self._disconnect(), self.loop)
 
+    def select_session(self, session_id):
+        """session_id=None reverts to automatic (most recently active)."""
+        asyncio.run_coroutine_threadsafe(self._select_session(session_id), self.loop)
+
     # --- async implementation (runs on the background loop) ---
 
     async def _scan(self):
         self.connection_changed.emit("scanning", "")
         self._log("Scanning for MOKUKU devices...")
-        devices = await discover_mokuku_devices()
+        try:
+            devices = await asyncio.wait_for(discover_mokuku_devices(), timeout=SCAN_TIMEOUT_SECONDS + 10.0)
+        except Exception as exc:
+            # Without this, a scan that raises (or hangs past its own
+            # internal timeout) left the button stuck on "Scanning..."
+            # forever with zero feedback - indistinguishable from "can't
+            # find the device" even though nothing was actually wrong with
+            # the device.
+            self._log(f"Scan failed: {exc}")
+            devices = []
         self._log(f"Found {len(devices)} device(s)" if devices else "No MOKUKU devices found")
         self.devices_found.emit(devices)
         if not self.client or not self.client.is_connected:
@@ -174,14 +210,38 @@ class Backend(QObject):
         self.connection_changed.emit("connected", address)
 
     async def _disconnect(self):
+        address = self.connected_address
         if self.client:
             try:
                 await asyncio.wait_for(self.client.disconnect(), timeout=5.0)
             except Exception:
                 pass
         self.client = None
+        if address:
+            # Belt and suspenders: force the radio-level disconnect via
+            # bluetoothctl too, regardless of whether bleak's own
+            # disconnect() above actually succeeded - see
+            # _bluetoothctl_disconnect's docstring for why this matters
+            # (otherwise the device can stay connected at the BlueZ level
+            # and simply stop being scannable, with the app none the wiser).
+            await _bluetoothctl_disconnect(address)
         self._log("Disconnected")
         self.connection_changed.emit("disconnected", "")
+
+    async def _select_session(self, session_id):
+        self.tracker.select_session(session_id)
+        if session_id is None:
+            self._log("Session selection: back to auto (most recently active)")
+        else:
+            info = self.tracker.sessions.get(session_id)
+            self._log(f"Session selection: pinned to {info['project'] if info else session_id[:8]}")
+        self._emit_sessions_changed()
+        # a manual selection should always refresh the display/device even if
+        # the newly-effective session happens to have the same (state, text)
+        # as whatever was showing before - the user just acted, so give
+        # immediate feedback rather than silently no-op'ing on a coincidence.
+        self._last_claude_status = None
+        self._emit_current_status()
 
     # --- Unix socket server (receives status updates from report_status.py) ---
 
@@ -214,6 +274,8 @@ class Backend(QObject):
                     ),
                     "current_state": state,
                     "current_text": text,
+                    "effective_session_id": self.tracker.effective_session_id(),
+                    "auto_selected": self.tracker.is_auto_selected(),
                 }
                 writer.write((json.dumps(summary) + "\n").encode())
                 await writer.drain()
@@ -227,13 +289,27 @@ class Backend(QObject):
             else:
                 self.tracker.update_session(session_id, msg.get("project"), msg.get("status"), msg.get("tool"),
                                             msg.get("detail"), pid=msg.get("pid"))
+            self._emit_sessions_changed()
             self._emit_current_status(source=msg.get("project") or session_id[:8])
         except (json.JSONDecodeError, OSError):
             pass
         finally:
             writer.close()
 
+    def _emit_sessions_changed(self):
+        auto_effective = self.tracker.is_auto_selected()
+        effective_id = self.tracker.effective_session_id()
+        items = [(None, "Auto (most recently active)", auto_effective)]
+        for sid, s in sorted(self.tracker.sessions.items(), key=lambda kv: -kv[1]["last_seen"]):
+            items.append((sid, f"{s['project']} — {s['status']}", sid == effective_id))
+        self.sessions_changed.emit(items)
+
     def _emit_current_status(self, source=None):
+        # Only the effective session's status is ever sent to MOKUKU or shown
+        # as "current" - see SessionTracker.effective_session_id(). With
+        # multiple sessions active, updates from a non-effective one still
+        # move it up the (most-recently-active-first) session list, but don't
+        # otherwise change what's currently displayed/sent.
         state, text = self.tracker.current_status()
         if (state, text) == self._last_claude_status:
             return
@@ -247,7 +323,12 @@ class Backend(QObject):
     async def _refresh_loop(self):
         while True:
             await asyncio.sleep(REFRESH_INTERVAL_SECONDS)
+            session_count_before = len(self.tracker.sessions)
             self.tracker.prune_stale_sessions()
+            if len(self.tracker.sessions) != session_count_before:
+                self._emit_sessions_changed()
+                self._emit_current_status()  # a pruned session may have been the effective one
+
             if not self.client or not self.client.is_connected:
                 continue
 
@@ -280,6 +361,7 @@ class MainWindow(QWidget):
         self.backend.connection_changed.connect(self._on_connection_changed)
         self.backend.log_message.connect(self._on_log_message)
         self.backend.claude_status_changed.connect(self._on_claude_status_changed)
+        self.backend.sessions_changed.connect(self._on_sessions_changed)
         self.backend.start()
 
     def _init_ui(self):
@@ -328,6 +410,14 @@ class MainWindow(QWidget):
         self.claude_status_label = QLabel("Idle")
         self.claude_status_label.setStyleSheet("font-size: 20px;")
         layout.addWidget(self.claude_status_label)
+
+        sessions_label = QLabel("Claude Code Sessions (click to choose which one to send)")
+        layout.addWidget(sessions_label)
+
+        self.session_list = QListWidget(self)
+        self.session_list.setFixedHeight(100)
+        self.session_list.itemClicked.connect(self._on_session_clicked)
+        layout.addWidget(self.session_list)
 
         layout.addWidget(self._hline())
 
@@ -395,6 +485,21 @@ class MainWindow(QWidget):
 
     def _on_claude_status_changed(self, state_name, text):
         self.claude_status_label.setText(f"{state_name}: {text.replace(chr(10), ' - ')}")
+
+    def _on_sessions_changed(self, items):
+        self.session_list.clear()
+        for session_id, label, is_effective in items:
+            marker = "● " if is_effective else "○ "  # ● currently sent to MOKUKU / ○ not
+            item = QListWidgetItem(marker + label)
+            item.setData(Qt.UserRole, session_id)
+            if is_effective:
+                font = item.font()
+                font.setBold(True)
+                item.setFont(font)
+            self.session_list.addItem(item)
+
+    def _on_session_clicked(self, item):
+        self.backend.select_session(item.data(Qt.UserRole))
 
     def closeEvent(self, event):
         self.backend.disconnect()
