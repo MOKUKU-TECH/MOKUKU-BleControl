@@ -202,7 +202,11 @@ The device side had a matching firmware bug: `ObdBleClientSetup()`
 (`IDF_SHARED/backend/BleClient.cpp`) called `BLEDevice::init()` again on
 every phone disconnect, which corrupted the already-running BLE stack and
 left MOKUKU permanently unable to advertise after the first disconnect -
-fixed by only calling it once, on the initial boot setup. The VibeCoding
+fixed by only calling it once, on the initial boot setup. `onDisconnect`
+also now directly calls `BLEDevice::startAdvertising()` itself instead of
+relying on it as an incidental side effect of that same
+`ObdBleClientSetup()`/`CreateBleService()` chain (which exists for an
+unrelated reason - restarting the OBD BLE *client* scan). The VibeCoding
 panel also now shows `Not Connected` as soon as the phone disconnects,
 instead of freezing on the last status it received.
 
