@@ -39,6 +39,7 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 
+import install_hooks
 from common.log import logging
 from vibe_monitor.protocol import (
     CHARACTERISTIC_UUID_ACK,
@@ -421,6 +422,16 @@ class MainWindow(QWidget):
 
         layout.addWidget(self._hline())
 
+        setup_label = QLabel("Setup")
+        setup_label.setStyleSheet("font-weight: bold;")
+        layout.addWidget(setup_label)
+
+        self.install_hooks_button = QPushButton("Install Claude Code Hooks", self)
+        self.install_hooks_button.clicked.connect(self._on_install_hooks_clicked)
+        layout.addWidget(self.install_hooks_button)
+
+        layout.addWidget(self._hline())
+
         log_label = QLabel("Activity Log")
         log_label.setStyleSheet("font-weight: bold;")
         layout.addWidget(log_label)
@@ -500,6 +511,27 @@ class MainWindow(QWidget):
 
     def _on_session_clicked(self, item):
         self.backend.select_session(item.data(Qt.UserRole))
+
+    def _on_install_hooks_clicked(self):
+        # Global (~/.claude/settings.json), not --project: this button has
+        # no notion of "current project" (it's a standalone app, often
+        # launched from a desktop icon with its own cwd), so it wires up
+        # every Claude Code session on this machine, matching plain
+        # `python3 install_hooks.py` from the CLI.
+        path = install_hooks.settings_path(project=False)
+        command = f"{sys.executable} {install_hooks.REPORT_SCRIPT}"
+        try:
+            settings = install_hooks.load_settings(path)
+            count = install_hooks.install(settings, command)
+            if count:
+                install_hooks.write_settings(path, settings)
+                message = f"Installed {count} hook entr{'y' if count == 1 else 'ies'} into {path}"
+            else:
+                message = f"Claude Code hooks already installed ({path})"
+        except OSError as exc:
+            message = f"Failed to install Claude Code hooks: {exc}"
+        self._on_log_message(f"{datetime.now().strftime('%H:%M:%S')}  {message}")
+        QMessageBox.information(self, "Claude Code Hooks", message)
 
     def closeEvent(self, event):
         self.backend.disconnect()

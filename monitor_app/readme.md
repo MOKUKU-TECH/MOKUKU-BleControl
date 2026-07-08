@@ -137,6 +137,10 @@ Idempotent and safe to re-run — only adds entries, existing hooks (including o
 for unrelated projects/devices) are left untouched, and the previous settings file
 is backed up to `settings.json.bak`. Undo with `python3 install_hooks.py --remove`.
 
+Or skip the CLI entirely: click **"Install Claude Code Hooks"** in
+`vibe_monitor_app.py` (step 3 below) — same idempotent merge into the global
+`~/.claude/settings.json`.
+
 Once installed, every `SessionStart` / `UserPromptSubmit` / `PreToolUse` /
 `PostToolUse` / `Notification` / `Stop` / `SubagentStop` / `SessionEnd` /
 `PreCompact` hook event calls `vibe_monitor/report_status.py`, which forwards
@@ -147,7 +151,15 @@ that app isn't running, this is a silent no-op.
 |---|---|
 | `SessionStart`, `Stop`, `SessionEnd` | `Idle` |
 | `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `SubagentStop`, `PreCompact` | tool name (+ detail), or `Working` |
-| `Notification` | `Waiting` |
+| `Notification` (`permission_prompt` only) | `Waiting` |
+| `MessageDisplay` | `Thinking` (throttled to ~once/2.5s per session - clears a stale `Waiting` once Claude resumes after you answer a question/permission prompt, since no other hook fires for that) |
+
+`Notification` also fires for other sub-types - most commonly `idle_prompt`,
+after *every* turn simply because Claude finished and is waiting for your
+next message, no action needed from you. `install_hooks.py` installs it
+scoped to `"matcher": "permission_prompt"` so only a real blocking wait
+shows `Waiting` - otherwise it'd flip to `Waiting` after every single
+response, which looks like a bug.
 
 ### 3. Run the monitor app and connect
 
@@ -169,7 +181,9 @@ Launcher" in some file managers - click through it once.
 
 Either way, it's a small standalone window (separate from `app.py`): click
 **Scan**, pick your device, click **Connect**. It shows the device connection
-state, the current Claude Code status, and a scrolling activity log. Unlike
+state, the current Claude Code status, a scrolling activity log, and an
+**"Install Claude Code Hooks"** button (step 2 above, if you skipped the
+CLI). Unlike
 the old headless daemon this replaces, nothing scans or connects
 automatically - you always know whether it's actually connected. It's not
 launched by the hooks either; run it yourself each session, and it refuses
@@ -183,6 +197,20 @@ never resumes advertising and won't show up in the next scan. Scanning uses
 `async with BleakScanner()` so an interrupted scan can't leave the adapter
 stuck and blocking future scans, and scan failures are logged rather than
 leaving the UI stuck on "Scanning...".
+
+The device side had a matching firmware bug: `ObdBleClientSetup()`
+(`IDF_SHARED/backend/BleClient.cpp`) called `BLEDevice::init()` again on
+every phone disconnect, which corrupted the already-running BLE stack and
+left MOKUKU permanently unable to advertise after the first disconnect -
+fixed by only calling it once, on the initial boot setup. The VibeCoding
+panel also now shows `Not Connected` as soon as the phone disconnects,
+instead of freezing on the last status it received.
+
+That covers a clean disconnect, but a crashed or suspended app can leave
+the BLE link nominally "up" for a while with no disconnect event at all -
+as a backstop, this app's every-2s time-sync write doubles as a heartbeat
+the panel expects to keep hearing; after 8s of silence it falls back to
+`Not Connected` on its own regardless of what BLE itself reports.
 
 ### Manual testing (app must already be running)
 

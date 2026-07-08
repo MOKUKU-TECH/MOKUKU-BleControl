@@ -13,6 +13,9 @@ whether it's run as a bare script or via `python -m`.
 import json
 import os
 import sys
+import tempfile
+import time
+from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import ipc_client  # noqa: E402
@@ -27,7 +30,35 @@ STATUS_BY_EVENT = {
     "SubagentStop": "working",
     "PreCompact": "working",
     "Notification": "waiting",
+    # There's no hook for "the user answered a question/permission prompt
+    # and Claude resumed" - MessageDisplay (fires while assistant text
+    # streams) is the only thing that happens during that gap, so it's what
+    # clears a stale "Waiting" once Claude starts talking again.
+    "MessageDisplay": "thinking",
 }
+
+# MessageDisplay fires continuously while text streams, and every firing
+# re-spawns this whole script - without throttling that's a socket round
+# trip (and whatever overhead that carries) on every chunk. A cheap local
+# timestamp file bounds it to about once per _MESSAGE_DISPLAY_THROTTLE_SECONDS
+# per session, which still clears "Waiting" within a few seconds of Claude
+# resuming.
+_MESSAGE_DISPLAY_THROTTLE_SECONDS = 2.5
+
+
+def _message_display_throttled(session_id):
+    path = Path(tempfile.gettempdir()) / f"mokuku-vibe-monitor-msgdisplay-{session_id}"
+    now = time.time()
+    try:
+        if now - path.stat().st_mtime < _MESSAGE_DISPLAY_THROTTLE_SECONDS:
+            return True
+    except OSError:
+        pass
+    try:
+        path.touch()
+    except OSError:
+        pass
+    return False
 
 DETAIL_KEYS = ("file_path", "command", "pattern", "description", "url")
 
@@ -88,6 +119,9 @@ def main():
 
     if event.get("hook_event_name") == "SessionEnd":
         ipc_client.send(session_id, ended=True)
+        return 0
+
+    if event.get("hook_event_name") == "MessageDisplay" and _message_display_throttled(session_id):
         return 0
 
     mapped = map_event(event)

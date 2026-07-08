@@ -46,15 +46,24 @@ def _pid_alive(pid):
 def encode_time_sync_message():
     """The 11-byte Transfer Data packet (id=1) that MyHostCallbacks::onMessageData
     (ble_messager.cc) reads as VEL/RPM/GAS/timestamp/backlight/command - sent
-    purely to carry a real Unix timestamp into SystemStateSetRealTime() on
-    every refresh tick, independent of whether the status text changed.
+    purely to carry the current time into SystemStateSetRealTime() on every
+    refresh tick, independent of whether the status text changed.
     VEL=255 and GAS=0 are this firmware's existing "no data" sentinels
     (data_valid_ = current_vel_ < 255; gas_valid() = gas_ > 0), so this
     doesn't make the speed/fuel panels believe they have real vehicle data;
     backlight=0 and command=0 are no-ops on the firmware side.
+
+    The timestamp field is local seconds-since-midnight, not a raw Unix
+    epoch: SystemStateGetTime() (state_manager.c) derives the displayed
+    clock as (this value) % 86400, with no timezone conversion of its own -
+    a raw UTC epoch's mod-86400 is UTC time-of-day, which is wrong by a
+    fixed offset for anyone not in UTC+0. messager.py's get_current_time_ms()
+    (the reference app's own equivalent of this function) already sends
+    local seconds-since-midnight for the same reason - mirrored here.
     """
     vel, rpm_a, rpm_b, gas = 255, 0, 0, 0
-    timestamp = int(time.time())
+    now = time.localtime()
+    timestamp = now.tm_hour * 3600 + now.tm_min * 60 + now.tm_sec
     backlight, command = 0, 0
     return bytes([1, vel, rpm_a, rpm_b, gas]) + struct.pack("<I", timestamp) + bytes([backlight, command])
 
@@ -127,6 +136,8 @@ def format_status(info):
         return STATE_WORKING, text
     elif status == "waiting":
         return STATE_WAITING, "Waiting"
+    elif status == "thinking":
+        return STATE_WORKING, "Thinking"
     return STATE_IDLE, "Idle"
 
 

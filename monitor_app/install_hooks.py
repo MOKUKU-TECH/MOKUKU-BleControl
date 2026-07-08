@@ -26,11 +26,19 @@ HOOK_EVENTS = {
     "UserPromptSubmit": None,
     "PreToolUse": ".*",
     "PostToolUse": ".*",
-    "Notification": None,
+    # Notification fires for several distinct sub-types, most commonly
+    # "idle_prompt" - Claude finished responding and is just waiting for the
+    # next prompt, which fires on every single turn with no user action
+    # involved. Scoping to "permission_prompt" only keeps this to genuine
+    # blocking waits (a tool/question needs your approval right now) -
+    # without it, the display flips to "Waiting" after every response,
+    # which reads as a bug ("I didn't do anything").
+    "Notification": "permission_prompt",
     "Stop": None,
     "SubagentStop": ".*",
     "SessionEnd": None,
     "PreCompact": None,
+    "MessageDisplay": None,
 }
 
 
@@ -84,6 +92,22 @@ def remove(settings: dict, command: str) -> int:
     return removed
 
 
+def write_settings(path: Path, settings: dict):
+    """Backs up path (if it exists) then writes settings to it. Shared by
+    the CLI below and vibe_monitor_app.py's "Install Claude Code Hooks"
+    button so both follow the exact same backup/write behavior. Returns the
+    backup Path, or None if there was nothing to back up."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    backup = None
+    if path.exists():
+        backup = path.with_name(path.name + ".bak")
+        backup.write_text(path.read_text())
+    with open(path, "w") as f:
+        json.dump(settings, f, indent=2)
+        f.write("\n")
+    return backup
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--project", action="store_true", help="write to ./.claude/settings.json instead of ~/.claude/settings.json")
@@ -113,15 +137,9 @@ def main():
     if count == 0:
         return 0
 
-    path.parent.mkdir(parents=True, exist_ok=True)
-    if path.exists():
-        backup = path.with_name(path.name + ".bak")
-        backup.write_text(path.read_text())
+    backup = write_settings(path, settings)
+    if backup:
         print(f"backed up existing file to {backup}")
-
-    with open(path, "w") as f:
-        json.dump(settings, f, indent=2)
-        f.write("\n")
     print(f"wrote {path}")
     return 0
 
