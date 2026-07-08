@@ -123,7 +123,7 @@ role (which normally scans for an OBD/ELM327 device) and its BLE *server* role
 (the phone/host connection) share one radio, and toggling between them on every
 connect/disconnect can produce a connect → disconnect → reconnect loop that
 fights whatever's trying to hold the host connection — a phone, `app.py`, or
-the `vibe_monitor` daemon below.
+`vibe_monitor_app.py` below.
 
 ### 2. Wire up Claude Code hooks
 
@@ -139,14 +139,9 @@ is backed up to `settings.json.bak`. Undo with `python3 install_hooks.py --remov
 
 Once installed, every `SessionStart` / `UserPromptSubmit` / `PreToolUse` /
 `PostToolUse` / `Notification` / `Stop` / `SubagentStop` / `SessionEnd` /
-`PreCompact` hook event calls `vibe_monitor/report_status.py`, which forwards to a
-small background daemon (`vibe_monitor/daemon.py`, started automatically on first
-use). The daemon tracks your Claude Code session, keeps a BLE connection to the
-closest device named `mokuku*` (by RSSI, in case multiple units are around),
-and pushes updated status text whenever it changes — no app window needs to
-stay open. It only scans while disconnected (an active scan competes with a
-live GATT connection for the radio), so it won't switch to a closer unit that
-shows up mid-connection - only on reconnect.
+`PreCompact` hook event calls `vibe_monitor/report_status.py`, which forwards
+the status over a local socket to `vibe_monitor_app.py` (see below) - if
+that app isn't running, this is a silent no-op.
 
 | hook event | status shown |
 |---|---|
@@ -154,13 +149,38 @@ shows up mid-connection - only on reconnect.
 | `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `SubagentStop`, `PreCompact` | tool name (+ detail), or `Working` |
 | `Notification` | `Waiting` |
 
-### Manual testing (no live hooks needed)
+### 3. Run the monitor app and connect
+
+```bash
+python vibe_monitor_app.py
+```
+
+Or make it a clickable app (one-time setup):
+
+```bash
+python3 install_desktop_launcher.py            # installs to your app menu + Desktop
+python3 install_desktop_launcher.py --dry-run  # preview the .desktop file first
+python3 install_desktop_launcher.py --remove   # uninstall
+```
+
+Searchable in your app menu as "MOKUKU Vibe Monitor" afterward. First
+double-click on a new Desktop icon may prompt "Untrusted Application
+Launcher" in some file managers - click through it once.
+
+Either way, it's a small standalone window (separate from `app.py`): click
+**Scan**, pick your device, click **Connect**. It shows the device connection
+state, the current Claude Code status, and a scrolling activity log. Unlike
+the old headless daemon this replaces, nothing scans or connects
+automatically - you always know whether it's actually connected. It's not
+launched by the hooks either; run it yourself each session, and it refuses
+to start a second instance while one is already running (same socket).
+
+### Manual testing (app must already be running)
 
 ```bash
 python3 -m vibe_monitor report working --session test1 --project demo --tool Edit --detail main.c
-python3 -m vibe_monitor daemon status   # tracked sessions, connected MOKUKU devices, current text
-python3 -m vibe_monitor daemon stop
+python3 -m vibe_monitor status   # tracked sessions, connected MOKUKU device, current state/text
 ```
 
 Set `MOKUKU_VIBE_MONITOR_DRY_RUN=1` when invoking `vibe_monitor/report_status.py`
-directly to print what would be sent instead of starting the daemon.
+directly to print what would be sent instead of actually sending it.

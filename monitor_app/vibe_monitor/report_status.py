@@ -2,8 +2,10 @@
 """Claude Code hook entry point.
 
 Reads a hook event's JSON payload from stdin and forwards a mapped status,
-tagged with this session's id and project, to the persistent daemon (see
-daemon.py) over its Unix socket. Installed into settings.json by
+tagged with this session's id and project, to vibe_monitor_app.py (see
+../vibe_monitor_app.py) over its Unix socket. The app is started and
+connected to MOKUKU manually by the user - if it isn't running, sending is a
+silent no-op (see ipc_client.py). Installed into settings.json by
 ../install_hooks.py (see doc/VIBE_CODING_MONITOR.md) - not imported as part
 of the package, so it bootstraps its own sys.path to find ipc_client.py
 whether it's run as a bare script or via `python -m`.
@@ -51,7 +53,7 @@ def project_name(event):
 def claude_pid():
     """The long-lived Claude Code process this hook belongs to. Hooks are
     spawned via a short-lived `sh -c` wrapper, so it's our grandparent -
-    resolvable only right now, while the wrapper is still alive. The daemon
+    resolvable only right now, while the wrapper is still alive. The app
     heartbeat-checks this pid so a session survives arbitrarily long silent
     stretches (one huge tool call, a long background wait) instead of being
     pruned as stale."""

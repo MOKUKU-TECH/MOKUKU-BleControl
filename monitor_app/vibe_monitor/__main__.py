@@ -1,40 +1,32 @@
 """Manual CLI for testing the MOKUKU vibe-coding monitor without live hooks.
+Requires vibe_monitor_app.py to already be running (started manually, see
+doc/VIBE_CODING_MONITOR.md) - there's no daemon to lazily launch here.
 
     python -m vibe_monitor report working --session test1 --project myrepo --tool Edit
-    python -m vibe_monitor daemon status
-    python -m vibe_monitor daemon stop
+    python -m vibe_monitor status
 """
 import argparse
 import sys
 
-from . import daemon, ipc_client
+from . import ipc_client
+from .protocol import STATE_NAMES
 
 VALID_STATUSES = ("idle", "working", "waiting")
-STATE_NAMES = {daemon.STATE_IDLE: "idle", daemon.STATE_WORKING: "working", daemon.STATE_WAITING: "waiting"}
 
 
 def cmd_report(args):
     ok = ipc_client.send(args.session, project=args.project, status=args.status, tool=args.tool, detail=args.detail)
     if not ok:
-        print("failed to reach the daemon", file=sys.stderr)
+        print("failed to reach vibe_monitor_app.py - is it running?", file=sys.stderr)
         return 1
     print("sent")
     return 0
 
 
-def cmd_daemon(args):
-    if args.action == "stop":
-        daemon.stop()
-        print("daemon stopped")
-        return 0
-
-    if not daemon.is_running():
-        print("daemon not running")
-        return 0
-
+def cmd_status(_args):
     summary = ipc_client.query_status()
     if summary is None:
-        print("daemon running but not responding")
+        print("failed to reach vibe_monitor_app.py - is it running?", file=sys.stderr)
         return 1
 
     print(f"sessions ({len(summary['sessions'])}):")
@@ -62,9 +54,8 @@ def main():
     report_p.add_argument("--detail", default=None)
     report_p.set_defaults(func=cmd_report)
 
-    daemon_p = sub.add_parser("daemon", help="inspect or control the background daemon")
-    daemon_p.add_argument("action", choices=("status", "stop"))
-    daemon_p.set_defaults(func=cmd_daemon)
+    status_p = sub.add_parser("status", help="query the running app's tracked sessions/devices")
+    status_p.set_defaults(func=cmd_status)
 
     args = parser.parse_args()
     sys.exit(args.func(args))

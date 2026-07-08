@@ -453,26 +453,37 @@ back to GPS mode — otherwise the left eye's background OBD-scan role fights
 whatever's holding the phone/host connection), then reboots the device to apply
 the new layout.
 
-## 2. Feed it live status from Claude Code
+## 2. Wire up Claude Code hooks
 
 ```
 python3 monitor_app/install_hooks.py
 ```
 
 Merges Claude Code hooks into `~/.claude/settings.json` (idempotent, only adds
-entries, backs up the previous file). From then on, a small background daemon
-(`monitor_app/vibe_monitor/`, started automatically by the first hook event) tracks
-your Claude Code session and keeps a BLE connection to the closest device named
-`mokuku*` (picked by RSSI, in case multiple units are around), pushing status text
-(command `52`) whenever it changes. No app needs to stay open.
+entries, backs up the previous file). Each hook event forwards a status over a
+local socket to `monitor_app/vibe_monitor_app.py` - if that app isn't running,
+this is a silent no-op.
 
-Manual testing without live hooks:
+## 3. Run the monitor app and connect
+
+```
+cd monitor_app
+python vibe_monitor_app.py
+```
+
+A standalone window: click **Scan**, pick your device, click **Connect**. It
+shows the device connection state, the current Claude Code status, and an
+activity log - the BLE connection is something you explicitly start and can
+see the state of, not an invisible background scan/connect loop. Run it
+yourself each session; it isn't launched by the hooks, and it refuses to
+start a second instance while one is already running.
+
+Manual testing without live hooks (app must already be running):
 
 ```
 cd monitor_app
 python3 -m vibe_monitor report working --session test1 --project demo --tool Edit --detail main.c
-python3 -m vibe_monitor daemon status
-python3 -m vibe_monitor daemon stop
+python3 -m vibe_monitor status
 ```
 
 # License
