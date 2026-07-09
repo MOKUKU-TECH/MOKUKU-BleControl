@@ -2,6 +2,32 @@
 
 This repository documents the **Bluetooth Low Energy (BLE) protocol** used by MOKUKU devices.
 
+## Quick Start: Vibe Coding Mode
+
+Mirror a Claude Code (or Codex CLI) session's live status on the left eye. Full details in [doc/VIBE_CODING_MONITOR.md](../doc/VIBE_CODING_MONITOR.md).
+
+```bash
+# 1. Build & flash the left-eye firmware (one-time)
+. $HOME/esp/esp-idf/export.sh
+./scripts/build_idf.sh 1
+idf.py -B IDF_MOKUKU/build_1 flash monitor
+
+# 2. Set up the Python env (first time only)
+conda env create -f BleControl/monitor_app/ble_ctrl_env.yaml
+conda activate ble_ctrl_env
+
+# 3. Enable the panel layout on the device (one-time)
+python BleControl/monitor_app/app.py     # Scan → Connect → "Enable Vibe Coding Monitor Mode"
+
+# 4. Install Claude Code hooks (one-time)
+python3 BleControl/monitor_app/install_hooks.py       # or --project for this repo only
+
+# 5. Run the monitor and connect (every session)
+python BleControl/monitor_app/vibe_monitor_app.py     # Scan → pick device → Connect
+```
+
+Once connected, the left eye reflects the session state: `Idle` (no tint), `Working` (red-orange), `Waiting` (pulsing) — with the tool/file and project name shown live.
+
 The protocol defines two BLE characteristics:
 
 | Characteristic   | UUID                                   | Purpose                                 |
