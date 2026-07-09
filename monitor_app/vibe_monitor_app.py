@@ -118,7 +118,7 @@ class Backend(QObject):
     devices_found = pyqtSignal(list)             # [(address, name, rssi), ...]
     connection_changed = pyqtSignal(str, str)     # (state, address); state: disconnected/scanning/connecting/connected
     log_message = pyqtSignal(str)
-    claude_status_changed = pyqtSignal(str, str)  # (state_name, text)
+    claude_status_changed = pyqtSignal(str, str, str)  # (state_name, project, text)
     sessions_changed = pyqtSignal(list)           # [(session_id_or_None, label, is_effective), ...]; None = "Auto" entry
 
     def __init__(self):
@@ -264,7 +264,7 @@ class Backend(QObject):
             msg = json.loads(line.decode().strip())
 
             if msg.get("cmd") == "status":
-                state, text = self.tracker.current_status()
+                state, project, text = self.tracker.current_status()
                 summary = {
                     "sessions": [
                         {"id": sid, "agent": s.get("agent", "claude"), "project": s["project"], "status": s["status"]}
@@ -275,6 +275,7 @@ class Backend(QObject):
                         if self.client and self.client.is_connected else []
                     ),
                     "current_state": state,
+                    "current_project": project,
                     "current_text": text,
                     "effective_session_id": self.tracker.effective_session_id(),
                     "auto_selected": self.tracker.is_auto_selected(),
@@ -313,11 +314,11 @@ class Backend(QObject):
         # multiple sessions active, updates from a non-effective one still
         # move it up the (most-recently-active-first) session list, but don't
         # otherwise change what's currently displayed/sent.
-        state, text = self.tracker.current_status()
-        if (state, text) == self._last_claude_status:
+        state, project, text = self.tracker.current_status()
+        if (state, project, text) == self._last_claude_status:
             return
-        self._last_claude_status = (state, text)
-        self.claude_status_changed.emit(STATE_NAMES[state], text)
+        self._last_claude_status = (state, project, text)
+        self.claude_status_changed.emit(STATE_NAMES[state], project, text)
         prefix = f"[{source}] " if source else ""
         self._log(f"{prefix}status -> {STATE_NAMES[state]}: {text.replace(chr(10), ' - ')}")
 
@@ -341,14 +342,15 @@ class Backend(QObject):
             except Exception:
                 continue  # disconnected_callback (if it fires) handles the UI update
 
-            state, text = self.tracker.current_status()
-            if self._last_sent == (state, text):
+            state, project, text = self.tracker.current_status()
+            if self._last_sent == (state, project, text):
                 continue
             try:
                 await asyncio.wait_for(
-                    self.client.write_gatt_char(CHARACTERISTIC_UUID_ACK, encode_status_message(state, text)),
+                    self.client.write_gatt_char(CHARACTERISTIC_UUID_ACK,
+                                                encode_status_message(state, project, text)),
                     timeout=10.0)
-                self._last_sent = (state, text)
+                self._last_sent = (state, project, text)
             except Exception:
                 pass
 
@@ -432,9 +434,17 @@ class MainWindow(QWidget):
         self.install_hooks_button.clicked.connect(self._on_install_hooks_clicked)
         layout.addWidget(self.install_hooks_button)
 
+        self.remove_hooks_button = QPushButton("Remove Claude Code Hooks", self)
+        self.remove_hooks_button.clicked.connect(self._on_remove_hooks_clicked)
+        layout.addWidget(self.remove_hooks_button)
+
         self.install_codex_hooks_button = QPushButton("Install Codex Hooks", self)
         self.install_codex_hooks_button.clicked.connect(self._on_install_codex_hooks_clicked)
         layout.addWidget(self.install_codex_hooks_button)
+
+        self.remove_codex_hooks_button = QPushButton("Remove Codex Hooks", self)
+        self.remove_codex_hooks_button.clicked.connect(self._on_remove_codex_hooks_clicked)
+        layout.addWidget(self.remove_codex_hooks_button)
 
         layout.addWidget(self._hline())
 
@@ -500,8 +510,9 @@ class MainWindow(QWidget):
     def _on_log_message(self, message):
         self.log_view.append(message)
 
-    def _on_claude_status_changed(self, state_name, text):
-        self.claude_status_label.setText(f"{state_name}: {text.replace(chr(10), ' - ')}")
+    def _on_claude_status_changed(self, state_name, project, text):
+        prefix = f"[{project}] " if project else ""
+        self.claude_status_label.setText(f"{prefix}{state_name}: {text.replace(chr(10), ' - ')}")
 
     def _on_sessions_changed(self, items):
         self.session_list.clear()
@@ -555,6 +566,37 @@ class MainWindow(QWidget):
                 message = f"Codex hooks already installed ({path})"
         except OSError as exc:
             message = f"Failed to install Codex hooks: {exc}"
+        self._on_log_message(f"{datetime.now().strftime('%H:%M:%S')}  {message}")
+        QMessageBox.information(self, "Codex Hooks", message)
+
+    def _on_remove_hooks_clicked(self):
+        path = install_hooks.settings_path(project=False)
+        command = f"{sys.executable} {install_hooks.REPORT_SCRIPT}"
+        try:
+            settings = install_hooks.load_settings(path)
+            count = install_hooks.remove(settings, command)
+            if count:
+                install_hooks.write_settings(path, settings)
+                message = f"Removed {count} hook entr{'y' if count == 1 else 'ies'} from {path}"
+            else:
+                message = f"No Claude Code hooks were installed ({path})"
+        except OSError as exc:
+            message = f"Failed to remove Claude Code hooks: {exc}"
+        self._on_log_message(f"{datetime.now().strftime('%H:%M:%S')}  {message}")
+        QMessageBox.information(self, "Claude Code Hooks", message)
+
+    def _on_remove_codex_hooks_clicked(self):
+        path = install_codex_hooks.hooks_path(project=False)
+        try:
+            config = install_codex_hooks.load_hooks(path)
+            count = install_codex_hooks.remove(config, sys.executable)
+            if count:
+                install_hooks.write_settings(path, config)
+                message = f"Removed {count} hook entr{'y' if count == 1 else 'ies'} from {path}"
+            else:
+                message = f"No Codex hooks were installed ({path})"
+        except OSError as exc:
+            message = f"Failed to remove Codex hooks: {exc}"
         self._on_log_message(f"{datetime.now().strftime('%H:%M:%S')}  {message}")
         QMessageBox.information(self, "Codex Hooks", message)
 

@@ -100,18 +100,6 @@ class MokukuMessager:
         # which is a different, unrelated code path.
         self.push_ack_message(list(struct.pack("<B", 6)))
 
-    def push_status_text(self, state, text):
-        # id=52: sets the VibeCoding panel's text (state: 0=idle, 1=working,
-        # 2=waiting - drives its background color/blink). Empty text is
-        # ignored on the firmware side - this panel has no fallback to revert to.
-        str_bytes = text.encode("utf-8")
-        byte_data = []
-        byte_data.extend(struct.pack("<B", 52))
-        byte_data.extend(struct.pack("<B", state))
-        byte_data.extend(struct.pack("<B", len(str_bytes)))
-        byte_data.extend(str_bytes)
-        self.push_ack_message(byte_data)
-
     def push_string_message(self, id, message):
         str_bytes = message.encode("utf-8")
         if len(str_bytes) > 255:

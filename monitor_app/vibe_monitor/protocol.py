@@ -11,7 +11,8 @@ from pathlib import Path
 CHARACTERISTIC_UUID_MAIN = "beb5483e-36e1-4688-b7f5-ea07361b26a8"
 CHARACTERISTIC_UUID_ACK = "d222e154-1a80-4e71-9a63-2aa2c0ce0a8c"
 DEVICE_NAME_PREFIX = "mokuku"
-STATUS_TEXT_MAX_BYTES = 31  # firmware STATUS_TEXT_BUFFER_SIZE (32) minus the null terminator
+STATUS_TEXT_MAX_BYTES = 63  # firmware's two 32-byte main/detail buffers (31 usable bytes each) + 1 newline separator
+PROJECT_NAME_MAX_BYTES = 31  # firmware VIBECODING_PROJECT_BUFFER_SIZE (32) minus the null terminator
 
 # vibe_monitor_app.py listens here; report_status.py connects here. A plain
 # well-known path (no lock file/pidfile) - the app is started and stopped
@@ -116,9 +117,10 @@ def _truncate_detail(text, max_bytes):
     return _keep_front_with_ellipsis(raw, max_bytes)
 
 
-def encode_status_message(state, text):
-    payload = _truncate_detail(text, STATUS_TEXT_MAX_BYTES)
-    return bytes([52, state, len(payload)]) + payload
+def encode_status_message(state, project, text):
+    project_bytes = (project or "").encode("utf-8")[:PROJECT_NAME_MAX_BYTES]
+    text_bytes = _truncate_detail(text, STATUS_TEXT_MAX_BYTES)
+    return bytes([52, state, len(project_bytes)]) + project_bytes + bytes([len(text_bytes)]) + text_bytes
 
 
 def format_status(info):
@@ -208,8 +210,10 @@ class SessionTracker:
         return max(self.sessions.items(), key=lambda kv: kv[1]["last_seen"])[0]
 
     def current_status(self):
-        """Returns (state, text)."""
+        """Returns (state, project, text)."""
         session_id = self.effective_session_id()
         if session_id is None:
-            return STATE_IDLE, "Idle"
-        return format_status(self.sessions[session_id])
+            return STATE_IDLE, "", "Idle"
+        session = self.sessions[session_id]
+        state, text = format_status(session)
+        return state, session["project"], text

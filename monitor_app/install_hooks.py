@@ -3,9 +3,11 @@
 Code's settings.json.
 
 Merges into whatever's already there - existing settings and unrelated
-hooks (including hooks for other projects/devices) are left untouched, and
-re-running is a no-op if already installed. Writes a .bak copy of the
-settings file before making any change.
+hooks (including hooks for other projects/devices) are left untouched.
+Re-running is a no-op if already installed and up to date, but also repairs
+drift on entries it previously installed (e.g. a stale matcher from before
+this script's HOOK_EVENTS changed). Writes a .bak copy of the settings file
+before making any change.
 
 Usage:
     python3 install_hooks.py                # writes to ~/.claude/settings.json
@@ -54,24 +56,37 @@ def load_settings(path: Path) -> dict:
         return json.load(f)
 
 
-def has_our_hook(entries, command):
-    return any(h.get("command") == command for entry in entries for h in entry.get("hooks", []))
+def find_our_entry(entries, command):
+    return next((entry for entry in entries for h in entry.get("hooks", []) if h.get("command") == command), None)
 
 
 def install(settings: dict, command: str) -> int:
+    """Adds our hook entries, and re-syncs the matcher on ones already
+    installed - e.g. this repo once installed Notification with no matcher,
+    which let every idle_prompt notification (fired ~60s into every idle
+    stretch, no user action involved) through as a false "Waiting" status;
+    re-running install_hooks.py after that fix landed needs to actually
+    correct that already-installed entry, not just no-op on it."""
     hooks = settings.setdefault("hooks", {})
-    added = 0
+    changed = 0
     for event, matcher in HOOK_EVENTS.items():
         entries = hooks.setdefault(event, [])
-        if has_our_hook(entries, command):
+        entry = find_our_entry(entries, command)
+        if entry is not None:
+            if entry.get("matcher") != matcher:
+                if matcher:
+                    entry["matcher"] = matcher
+                else:
+                    entry.pop("matcher", None)
+                changed += 1
             continue
         entry = {}
         if matcher:
             entry["matcher"] = matcher
         entry["hooks"] = [{"type": "command", "command": command}]
         entries.append(entry)
-        added += 1
-    return added
+        changed += 1
+    return changed
 
 
 def remove(settings: dict, command: str) -> int:
@@ -126,9 +141,9 @@ def main():
     else:
         count = install(settings, command)
         if count:
-            print(f"added {count} hook entr{'y' if count == 1 else 'ies'} ({path})")
+            print(f"added/updated {count} hook entr{'y' if count == 1 else 'ies'} ({path})")
         else:
-            print(f"already installed, nothing to do ({path})")
+            print(f"already installed and up to date, nothing to do ({path})")
 
     if args.dry_run:
         print(json.dumps(settings, indent=2))

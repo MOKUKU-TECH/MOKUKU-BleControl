@@ -39,7 +39,8 @@ def cmd_status(_args):
         print(f"  {d['address']}  {'connected' if d['connected'] else 'disconnected'}")
 
     state_name = STATE_NAMES.get(summary.get("current_state"), summary.get("current_state"))
-    print(f"current state/text sent to MOKUKU: {state_name} / {summary['current_text']!r}")
+    project = summary.get("current_project") or ""
+    print(f"current state/text sent to MOKUKU: {state_name} / {project!r} / {summary['current_text']!r}")
     return 0
 
 

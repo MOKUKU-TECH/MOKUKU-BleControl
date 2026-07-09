@@ -49,5 +49,5 @@ def send(session_id, project=None, status=None, tool=None, detail=None, ended=Fa
 
 
 def query_status(timeout=2.0):
-    """Returns the app's {sessions, devices, current_state, current_text} summary dict, or None."""
+    """Returns the app's {sessions, devices, current_state, current_project, current_text} summary dict, or None."""
     return _send_message({"cmd": "status"}, timeout=timeout, expect_reply=True)

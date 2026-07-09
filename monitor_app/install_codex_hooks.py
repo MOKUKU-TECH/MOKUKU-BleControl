@@ -24,7 +24,7 @@ import json
 import sys
 from pathlib import Path
 
-from install_hooks import write_settings as write_hooks
+from install_hooks import find_our_entry, write_settings as write_hooks
 
 REPORT_SCRIPT = str((Path(__file__).resolve().parent / "vibe_monitor" / "report_status.py"))
 
@@ -56,17 +56,13 @@ def load_hooks(path: Path) -> dict:
         return json.load(f)
 
 
-def has_our_hook(entries, command):
-    return any(h.get("command") == command for entry in entries for h in entry.get("hooks", []))
-
-
 def install(config: dict, python: str) -> int:
     hooks = config.setdefault("hooks", {})
     added = 0
     for event in HOOK_EVENTS:
         command = command_for_event(python, event)
         entries = hooks.setdefault(event, [])
-        if has_our_hook(entries, command):
+        if find_our_entry(entries, command) is not None:
             continue
         entries.append({"hooks": [{"type": "command", "command": command}]})
         added += 1
