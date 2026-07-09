@@ -23,6 +23,7 @@ The device exposes two BLE characteristics:
 
 # 1. Transfer Data
 
+
 **BLE UUID:** `beb5483e-36e1-4688-b7f5-ea07361b26a8`
 
 Used for **real-time dashboard updates**.
