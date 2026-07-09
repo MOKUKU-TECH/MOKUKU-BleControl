@@ -110,13 +110,31 @@ with the VibeCoding panel — see
 [../../doc/VIBE_CODING_MONITOR.md](../../doc/VIBE_CODING_MONITOR.md) if you have
 that repo checked out.
 
+### Quick start (prebuilt app — no Python needed)
+
+1. Download the zip for your OS from the repo's **Releases** (or the
+   **Build Vibe Monitor** GitHub Actions run's artifacts):
+   `MOKUKU-Vibe-Monitor-windows.zip` or `MOKUKU-Vibe-Monitor-linux.zip`.
+2. Extract it anywhere and double-click **MOKUKU Vibe Monitor** inside the
+   extracted folder. No Python, conda, or `pip install` required.
+3. Click **Scan**, pick your device, click **Connect**.
+4. Click **Enable Vibe Coding Monitor Mode** (one-time — reboots the device;
+   reconnect after it comes back up).
+5. Click **Install Claude Code Hooks** (and **Install Codex Hooks** if you use
+   Codex — then run `/hooks` inside Codex to trust them).
+
+That's it. Keep the app running while you code; it forwards each session's
+status to MOKUKU. The rest of this section explains each piece and the
+run-from-source path for developers.
+
 ### 1. Enable the mode on the device
 
-In `app.py`, click **"Enable Vibe Coding Monitor Mode"**. This sends the panel
-layout (left: `11-5` — VibeCoding + Fuel, right: `9-7-10` — Time + Duration +
-Music), disables OBD/canbus BLE scanning (command `35`, falls back to GPS mode),
-and reboots the device to apply it. One-time setup; reconnect after the device
-comes back up.
+Connect over BLE, then click **"Enable Vibe Coding Monitor Mode"** in the app.
+This sends the panel layout (left: `11-5` — VibeCoding + Fuel, right: `9-7-10`
+— Time + Duration + Music), disables OBD/canbus BLE scanning (command `35`,
+falls back to GPS mode), and reboots the device to apply it. One-time setup;
+reconnect after the device comes back up. (The reference `app.py` has the same
+button — the folded-in copy here means end users never need `app.py` or conda.)
 
 Disabling OBD scanning avoids a real failure mode: the left eye's BLE *client*
 role (which normally scans for an OBD/ELM327 device) and its BLE *server* role
@@ -126,6 +144,13 @@ fights whatever's trying to hold the host connection — a phone, `app.py`, or
 `vibe_monitor_app.py` below.
 
 ### 2. Wire up Claude Code hooks
+
+Easiest: click **"Install Claude Code Hooks"** in the app (a one-time step;
+same idempotent merge into the global `~/.claude/settings.json`). The prebuilt
+app wires the hook command to the bundled executable itself — the hook runs
+`<app> --hook-report`, so there's no Python for you to have installed.
+
+From source, use the CLI instead:
 
 ```bash
 python3 install_hooks.py            # merges into ~/.claude/settings.json
@@ -137,15 +162,11 @@ Idempotent and safe to re-run — only adds entries, existing hooks (including o
 for unrelated projects/devices) are left untouched, and the previous settings file
 is backed up to `settings.json.bak`. Undo with `python3 install_hooks.py --remove`.
 
-Or skip the CLI entirely: click **"Install Claude Code Hooks"** in
-`vibe_monitor_app.py` (step 3 below) — same idempotent merge into the global
-`~/.claude/settings.json`.
-
 Once installed, every `SessionStart` / `UserPromptSubmit` / `PreToolUse` /
 `PostToolUse` / `Notification` / `Stop` / `SubagentStop` / `SessionEnd` /
-`PreCompact` hook event calls `vibe_monitor/report_status.py`, which forwards
-the status over a local socket to `vibe_monitor_app.py` (see below) - if
-that app isn't running, this is a silent no-op.
+`PreCompact` hook event forwards the status (over a TCP loopback socket,
+`127.0.0.1:47615`) to the running app - if it isn't running, this is a silent
+no-op.
 
 ### 2b. Optional: also wire up Codex CLI hooks
 

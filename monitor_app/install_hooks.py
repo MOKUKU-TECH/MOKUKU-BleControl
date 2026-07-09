@@ -22,6 +22,23 @@ from pathlib import Path
 
 REPORT_SCRIPT = str((Path(__file__).resolve().parent / "vibe_monitor" / "report_status.py"))
 
+
+def _join(*parts):
+    """Join command parts, quoting any that contain spaces (Windows install
+    paths like 'C:\\Program Files\\...' otherwise break the hook command)."""
+    return " ".join(f'"{p}"' if " " in p else p for p in parts)
+
+
+def report_command(python: str) -> str:
+    """The hook command Claude Code should run. In a PyInstaller bundle the
+    bundled executable itself dispatches on `--hook-report` (see main.py), so
+    the command is the exe with no interpreter or script path - there is no
+    Python for the end user to have installed. From source it's the given
+    interpreter running report_status.py, unchanged."""
+    if getattr(sys, "frozen", False):
+        return _join(sys.executable, "--hook-report")
+    return _join(python, REPORT_SCRIPT)
+
 # event -> matcher (None if the event doesn't take one)
 HOOK_EVENTS = {
     "SessionStart": None,
@@ -132,7 +149,7 @@ def main():
     args = parser.parse_args()
 
     path = settings_path(args.project)
-    command = f"{args.python} {REPORT_SCRIPT}"
+    command = report_command(args.python)
     settings = load_settings(path)
 
     if args.remove:

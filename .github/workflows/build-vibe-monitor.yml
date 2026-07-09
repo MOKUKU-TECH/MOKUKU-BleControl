@@ -1,0 +1,50 @@
+name: Build Vibe Monitor
+
+# PyInstaller can't cross-compile, so each OS builds its own bundle on its
+# own runner. Produces a zipped onedir the user extracts and double-clicks -
+# no Python environment needed on the target machine. Artifacts are attached
+# to the run; pushing a tag also publishes them to a GitHub Release.
+on:
+  push:
+    branches: [master, main, compress_app]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            script: powershell -ExecutionPolicy Bypass -File packaging/build.ps1
+            artifact: MOKUKU-Vibe-Monitor-windows
+          - os: ubuntu-latest
+            script: bash packaging/build.sh
+            artifact: MOKUKU-Vibe-Monitor-linux
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: monitor_app
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Build bundle
+        run: ${{ matrix.script }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: monitor_app/dist/*.zip
+          if-no-files-found: error
+
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: monitor_app/dist/*.zip

@@ -2,9 +2,29 @@
 
 import logging
 import logging.config
-
+import os
+import sys
+from pathlib import Path
 
 """Logging configuration"""
+
+
+def _log_dir() -> Path:
+    """A user-writable directory for the log files. The packaged app can be
+    launched from a read-only location (Program Files, an extracted release
+    folder), so writing info.log/error.log into the current directory - as
+    this module used to - can make dictConfig() raise at import time and stop
+    the app from starting at all."""
+    if sys.platform.startswith("win"):
+        base = os.environ.get("LOCALAPPDATA") or Path.home()
+    else:
+        base = os.environ.get("XDG_STATE_HOME") or (Path.home() / ".local" / "state")
+    path = Path(base) / "mokuku-vibe-monitor"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+_LOG_DIR = _log_dir()
 
 LOGGING_CONFIG = {
     "version": 1,
@@ -34,7 +54,7 @@ LOGGING_CONFIG = {
             "level": "INFO",
             "formatter": "info",
             "class": "logging.handlers.RotatingFileHandler",
-            "filename": "info.log",
+            "filename": str(_LOG_DIR / "info.log"),
             "mode": "a",
             "maxBytes": 1048576,
             "backupCount": 10,
@@ -43,7 +63,7 @@ LOGGING_CONFIG = {
             "level": "WARNING",
             "formatter": "error",
             "class": "logging.FileHandler",
-            "filename": "error.log",
+            "filename": str(_LOG_DIR / "error.log"),
             "mode": "a",
         },
     },
