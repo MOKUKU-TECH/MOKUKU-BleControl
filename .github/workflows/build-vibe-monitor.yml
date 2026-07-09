@@ -15,10 +15,10 @@ on:
     branches: [master]
   workflow_dispatch:
 
-# Supersede in-progress runs for the same branch/PR when a new push arrives.
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+# # Supersede in-progress runs for the same branch/PR when a new push arrives.
+# concurrency:
+#   group: ${{ github.workflow }}-${{ github.ref }}
+#   cancel-in-progress: true
 
 jobs:
   build:
