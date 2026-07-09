@@ -2,31 +2,32 @@
 
 This repository documents the **Bluetooth Low Energy (BLE) protocol** used by MOKUKU devices.
 
-## Quick Start: Vibe Coding Mode
+## Quick Start (prebuilt app — no Python needed)
 
 Mirror a Claude Code (or Codex CLI) session's live status on the left eye. Full details in [doc/VIBE_CODING_MONITOR.md](../doc/VIBE_CODING_MONITOR.md).
 
+**1. Build & flash the left-eye firmware (one-time, needs ESP-IDF)**
+
 ```bash
-# 1. Build & flash the left-eye firmware (one-time)
 . $HOME/esp/esp-idf/export.sh
 ./scripts/build_idf.sh 1
 idf.py -B IDF_MOKUKU/build_1 flash monitor
-
-# 2. Set up the Python env (first time only)
-conda env create -f BleControl/monitor_app/ble_ctrl_env.yaml
-conda activate ble_ctrl_env
-
-# 3. Enable the panel layout on the device (one-time)
-python BleControl/monitor_app/app.py     # Scan → Connect → "Enable Vibe Coding Monitor Mode"
-
-# 4. Install Claude Code hooks (one-time)
-python3 BleControl/monitor_app/install_hooks.py       # or --project for this repo only
-
-# 5. Run the monitor and connect (every session)
-python BleControl/monitor_app/vibe_monitor_app.py     # Scan → pick device → Connect
 ```
 
+**2. Get the host app**
+
+Download the prebuilt app for your OS from **Releases** (or the **Build Vibe Monitor** GitHub Actions run's artifacts): `MOKUKU-Vibe-Monitor-windows.zip`, or for Linux one of `-ubuntu20.04.zip` / `-ubuntu22.04.zip` / `-ubuntu24.04.zip` (pick the newest your system runs; if it reports `GLIBC_… not found`, step down to an older build). Extract it and double-click **MOKUKU Vibe Monitor** — no Python, conda, or `pip install` required.
+
+**3. Set it up in the app**
+
+- Click **Scan**, pick your device, click **Connect**.
+- Expand **Firmware Update (OTA)** and click **Enable Vibe Coding Monitor Mode** (one-time — reboots the device; reconnect after it comes back up).
+- Click **Install Claude Code Hooks** (and **Install Codex Hooks** if you use Codex, then run `/hooks` inside Codex to trust them).
+- Keep the app running while you code.
+
 Once connected, the left eye reflects the session state: `Idle` (no tint), `Working` (red-orange), `Waiting` (pulsing) — with the tool/file and project name shown live.
+
+Developers can instead run from source: `pip install -r BleControl/monitor_app/requirements.txt` (or the conda env in `ble_ctrl_env.yaml`), then `python BleControl/monitor_app/vibe_monitor_app.py`.
 
 The protocol defines two BLE characteristics:
 
@@ -472,37 +473,31 @@ status for a coding-agent session (e.g. Claude Code) — what it's doing right n
 
 ## 1. Enable the mode on the device
 
-Connect with `monitor_app/app.py` and click **"Enable Vibe Coding Monitor Mode"**. This
-sets the left eye to `11-5` (VibeCoding + Fuel) and the right eye to `9-7-10`
-(Time + Duration + Music), disables OBD/canbus BLE scanning (command `35`, falls
-back to GPS mode — otherwise the left eye's background OBD-scan role fights
-whatever's holding the phone/host connection), then reboots the device to apply
-the new layout.
+In the app (see [Quick Start](#quick-start-prebuilt-app--no-python-needed) for how to
+get it), connect, then expand **Firmware Update (OTA)** and click **"Enable Vibe
+Coding Monitor Mode"**. This sets the left eye to `11-5` (VibeCoding + Fuel) and the
+right eye to `9-7-10` (Time + Duration + Music), disables OBD/canbus BLE scanning
+(command `35`, falls back to GPS mode — otherwise the left eye's background OBD-scan
+role fights whatever's holding the phone/host connection), then reboots the device to
+apply the new layout.
 
 ## 2. Wire up Claude Code hooks
 
-```
-python3 monitor_app/install_hooks.py
-```
-
-Merges Claude Code hooks into `~/.claude/settings.json` (idempotent, only adds
-entries, backs up the previous file). Each hook event forwards a status over a
-local socket to `monitor_app/vibe_monitor_app.py` - if that app isn't running,
-this is a silent no-op.
+Click **"Install Claude Code Hooks"** in the app. In the prebuilt bundle the hook
+command points at the bundled executable itself (`<app> --hook-report`), so there's no
+Python for the end user to have. Each hook event forwards a status over a TCP loopback
+socket (`127.0.0.1:47615`) to the running app — if it isn't running, this is a silent
+no-op. From source, `python3 monitor_app/install_hooks.py` does the same idempotent
+merge into `~/.claude/settings.json`.
 
 ## 3. Run the monitor app and connect
 
-```
-cd monitor_app
-python vibe_monitor_app.py
-```
-
-A standalone window: click **Scan**, pick your device, click **Connect**. It
-shows the device connection state, the current Claude Code status, and an
-activity log - the BLE connection is something you explicitly start and can
-see the state of, not an invisible background scan/connect loop. Run it
-yourself each session; it isn't launched by the hooks, and it refuses to
-start a second instance while one is already running.
+Double-click **MOKUKU Vibe Monitor** (prebuilt), or `python monitor_app/vibe_monitor_app.py`
+from source. A standalone window: click **Scan**, pick your device, click **Connect**. It
+shows the device connection state, the current Claude Code status, and an activity log -
+the BLE connection is something you explicitly start and can see the state of, not an
+invisible background scan/connect loop. Run it yourself each session; it isn't launched
+by the hooks, and it refuses to start a second instance while one is already running.
 
 Manual testing without live hooks (app must already be running):
 
