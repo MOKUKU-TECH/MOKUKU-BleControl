@@ -261,6 +261,24 @@ as a backstop, this app's every-2s time-sync write doubles as a heartbeat
 the panel expects to keep hearing; after 8s of silence it falls back to
 `Not Connected` on its own regardless of what BLE itself reports.
 
+### Firmware update (OTA)
+
+Click **Firmware Update (OTA)** to expand a panel (hidden by default) with the
+same OTA controls as the reference `app.py`, so the packaged app can update
+firmware too:
+
+- **Set WiFi** — sends the network name/password the device downloads the
+  firmware over (string messages `7`/`8`).
+- **Set URL** — the firmware `.bin` URL (string message `9`).
+- **Start OTA** — triggers the **right eye first** (command `67`), then after
+  ~0.5s the **left eye** (command `66`). The left/INS eye owns the BLE link, so
+  updating it first can interrupt the right eye's update - hence right-before-left
+  (matching the ordering note under [OTA Update Commands](#ota-update-commands)).
+  The left-eye trigger drops the connection as it reboots into the update.
+
+Set WiFi and the URL once (they persist on the device), keep the device
+powered, and don't disconnect until it finishes.
+
 ### Manual testing (app must already be running)
 
 ```bash

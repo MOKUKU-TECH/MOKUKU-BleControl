@@ -30,6 +30,20 @@ MSG_ID_LEFT_PANEL_ARRAY = 50
 MSG_ID_RIGHT_PANEL_ARRAY = 51
 COMMAND_DISABLE_BLE_SCAN = 35      # DisableBleScan(): stop OBD/canbus scanning, fall back to GPS mode
 
+# WiFi credentials + firmware URL for HTTP OTA, sent as string messages on the
+# ACK characteristic (the device downloads the firmware over this network).
+MSG_ID_WIFI_NAME = 7
+MSG_ID_WIFI_PASSWORD = 8
+MSG_ID_OTA_HTTP_URL = 9
+
+# OTA triggers, sent as command bytes (encode_command_message). The right eye
+# must update before the left: the left/INS eye owns the BLE link, so updating
+# it first can interrupt the right eye's still-running update - hence the delay
+# between the two.
+COMMAND_OTA_RIGHT_EYE = 67  # forwarded over inter-eye UART to the right eye
+COMMAND_OTA_LEFT_EYE = 66   # runs on the local left/INS/BLE eye
+OTA_EYE_ORDER_DELAY_SECONDS = 0.5
+
 SESSION_STALE_SECONDS = 30 * 60        # sessions with no liveness pid only
 SESSION_ABS_STALE_SECONDS = 24 * 3600  # backstop even with a live pid (pid-reuse paranoia)
 
