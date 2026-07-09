@@ -72,6 +72,7 @@ from vibe_monitor.protocol import (
 
 REFRESH_INTERVAL_SECONDS = 2
 SCAN_TIMEOUT_SECONDS = 4.0
+DEFAULT_OTA_URL = "https://prod-cn-hk-alicloud-mokuku-deepmirror-s3.oss-cn-hongkong.aliyuncs.com/DEBUG/vc"
 
 
 IS_LINUX = sys.platform.startswith("linux")
@@ -522,6 +523,9 @@ class MainWindow(QWidget):
 
         self.claude_status_label = QLabel("Idle")
         self.claude_status_label.setStyleSheet("font-size: 20px;")
+        # Wrap long detail lines (e.g. a long shell command / file path) onto
+        # multiple rows instead of forcing the window wider to fit one line.
+        self.claude_status_label.setWordWrap(True)
         layout.addWidget(self.claude_status_label)
 
         sessions_label = QLabel("Claude Code Sessions (click to choose which one to send)")
@@ -537,11 +541,6 @@ class MainWindow(QWidget):
         setup_label = QLabel("Setup")
         setup_label.setStyleSheet("font-weight: bold;")
         layout.addWidget(setup_label)
-
-        self.enable_vibe_mode_button = QPushButton("Enable Vibe Coding Monitor Mode (one-time, reboots device)", self)
-        self.enable_vibe_mode_button.clicked.connect(self._on_enable_vibe_mode_clicked)
-        self.enable_vibe_mode_button.setEnabled(False)
-        layout.addWidget(self.enable_vibe_mode_button)
 
         self.install_hooks_button = QPushButton("Install Claude Code Hooks", self)
         self.install_hooks_button.clicked.connect(self._on_install_hooks_clicked)
@@ -594,6 +593,10 @@ class MainWindow(QWidget):
         self.ota_group = QGroupBox("Firmware Update (OTA)")
         ota_layout = QVBoxLayout()
 
+        self.enable_vibe_mode_button = QPushButton("Enable Vibe Coding Monitor Mode (one-time, reboots device)", self)
+        self.enable_vibe_mode_button.clicked.connect(self._on_enable_vibe_mode_clicked)
+        ota_layout.addWidget(self.enable_vibe_mode_button)
+
         ota_layout.addWidget(QLabel("WiFi (the device downloads the firmware over this network)"))
         wifi_row = QHBoxLayout()
         self.wifi_name_input = QLineEdit(self)
@@ -612,6 +615,7 @@ class MainWindow(QWidget):
         url_row = QHBoxLayout()
         self.ota_url_input = QLineEdit(self)
         self.ota_url_input.setPlaceholderText("http://host/path/firmware.bin")
+        self.ota_url_input.setText(DEFAULT_OTA_URL)
         self.set_ota_url_button = QPushButton("Set URL", self)
         self.set_ota_url_button.clicked.connect(self._on_set_ota_url_clicked)
         url_row.addWidget(self.ota_url_input)
@@ -622,9 +626,10 @@ class MainWindow(QWidget):
         self.start_ota_button.clicked.connect(self._on_start_ota_clicked)
         ota_layout.addWidget(self.start_ota_button)
 
-        # Disabled until connected, matching enable_vibe_mode_button - the
-        # first connection_changed event flips them (see _on_connection_changed).
-        for button in (self.set_wifi_button, self.set_ota_url_button, self.start_ota_button):
+        # Disabled until connected - the first connection_changed event flips
+        # them on (see _on_connection_changed).
+        for button in (self.enable_vibe_mode_button, self.set_wifi_button,
+                       self.set_ota_url_button, self.start_ota_button):
             button.setEnabled(False)
 
         self.ota_group.setLayout(ota_layout)
@@ -820,7 +825,19 @@ class MainWindow(QWidget):
         QMessageBox.information(self, "Codex Hooks", message)
 
     def closeEvent(self, event):
-        self.backend.disconnect()
+        reply = QMessageBox.question(
+            self,
+            "Quit",
+            "Quit the MOKUKU Vibe Monitor? MOKUKU will stop receiving status updates "
+            "and fall back to \"Not Connected\".",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if reply != QMessageBox.Yes:
+            event.ignore()
+            return
+        if self.backend.loop is not None:  # skip if closed before the backend loop started
+            self.backend.disconnect()
         event.accept()
 
 

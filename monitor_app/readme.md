@@ -114,16 +114,16 @@ that repo checked out.
 
 1. Download the zip for your OS from the repo's **Releases** (or the
    **Build Vibe Monitor** GitHub Actions run's artifacts):
-   `MOKUKU-Vibe-Monitor-windows.zip`, or for Linux
-   `MOKUKU-Vibe-Monitor-linux-ubuntu22.04.zip` (runs on glibc 2.35+, i.e.
-   Ubuntu 22.04 and older systems) or `-ubuntu24.04.zip` (Ubuntu 24.04 /
-   glibc 2.39+). If the 24.04 build reports `GLIBC_... not found`, use the
-   22.04 one.
+   `MOKUKU-Vibe-Monitor-windows.zip`, or for Linux one of
+   `-ubuntu20.04.zip` (glibc 2.31+, oldest systems), `-ubuntu22.04.zip`
+   (glibc 2.35+), or `-ubuntu24.04.zip` (glibc 2.39+). Pick the newest one
+   your system runs; if it reports `GLIBC_… not found`, step down to an older
+   build.
 2. Extract it anywhere and double-click **MOKUKU Vibe Monitor** inside the
    extracted folder. No Python, conda, or `pip install` required.
 3. Click **Scan**, pick your device, click **Connect**.
-4. Click **Enable Vibe Coding Monitor Mode** (one-time — reboots the device;
-   reconnect after it comes back up).
+4. Expand **Firmware Update (OTA)** and click **Enable Vibe Coding Monitor
+   Mode** (one-time — reboots the device; reconnect after it comes back up).
 5. Click **Install Claude Code Hooks** (and **Install Codex Hooks** if you use
    Codex — then run `/hooks` inside Codex to trust them).
 
@@ -133,7 +133,8 @@ run-from-source path for developers.
 
 ### 1. Enable the mode on the device
 
-Connect over BLE, then click **"Enable Vibe Coding Monitor Mode"** in the app.
+Connect over BLE, then expand the **Firmware Update (OTA)** panel and click
+**"Enable Vibe Coding Monitor Mode"**.
 This sends the panel layout (left: `11-5` — VibeCoding + Fuel, right: `9-7-10`
 — Time + Duration + Music), disables OBD/canbus BLE scanning (command `35`,
 falls back to GPS mode), and reboots the device to apply it. One-time setup;
@@ -265,11 +266,13 @@ the panel expects to keep hearing; after 8s of silence it falls back to
 
 Click **Firmware Update (OTA)** to expand a panel (hidden by default) with the
 same OTA controls as the reference `app.py`, so the packaged app can update
-firmware too:
+firmware too. It also holds the **Enable Vibe Coding Monitor Mode** button
+(step 1 above):
 
 - **Set WiFi** — sends the network name/password the device downloads the
   firmware over (string messages `7`/`8`).
-- **Set URL** — the firmware `.bin` URL (string message `9`).
+- **Set URL** — the firmware `.bin` URL (string message `9`); prefilled with a
+  default build URL you can overwrite.
 - **Start OTA** — triggers the **right eye first** (command `67`), then after
   ~0.5s the **left eye** (command `66`). The left/INS eye owns the BLE link, so
   updating it first can interrupt the right eye's update - hence right-before-left
