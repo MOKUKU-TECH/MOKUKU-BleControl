@@ -98,3 +98,151 @@ Example `config.txt` content:
 
 * To reset or recover MOKUKU, send an **empty `config.txt`** file.
 * This clears all custom panels and restores the default display.
+
+## Vibe Coding Monitor Mode
+
+Reflects a Claude Code and/or Codex CLI session's live status ("Thinking",
+"Edit: main.c", "Waiting", "Idle") on a dedicated VibeCoding panel
+(`PANEL_TYPE_VIBECODING`, id `11`), via BLE command `52`
+([VibeCoding Panel Status Text](../Readme.md#vibecoding-panel-status-text)).
+Requires the firmware in this repo's parent project (`IDF_MOKUKU`) to be built
+with the VibeCoding panel — see
+[../../doc/VIBE_CODING_MONITOR.md](../../doc/VIBE_CODING_MONITOR.md) if you have
+that repo checked out.
+
+### 1. Enable the mode on the device
+
+In `app.py`, click **"Enable Vibe Coding Monitor Mode"**. This sends the panel
+layout (left: `11-5` — VibeCoding + Fuel, right: `9-7-10` — Time + Duration +
+Music), disables OBD/canbus BLE scanning (command `35`, falls back to GPS mode),
+and reboots the device to apply it. One-time setup; reconnect after the device
+comes back up.
+
+Disabling OBD scanning avoids a real failure mode: the left eye's BLE *client*
+role (which normally scans for an OBD/ELM327 device) and its BLE *server* role
+(the phone/host connection) share one radio, and toggling between them on every
+connect/disconnect can produce a connect → disconnect → reconnect loop that
+fights whatever's trying to hold the host connection — a phone, `app.py`, or
+`vibe_monitor_app.py` below.
+
+### 2. Wire up Claude Code hooks
+
+```bash
+python3 install_hooks.py            # merges into ~/.claude/settings.json
+python3 install_hooks.py --project  # or into ./.claude/settings.json for just this project
+python3 install_hooks.py --dry-run  # preview the result first without writing anything
+```
+
+Idempotent and safe to re-run — only adds entries, existing hooks (including ones
+for unrelated projects/devices) are left untouched, and the previous settings file
+is backed up to `settings.json.bak`. Undo with `python3 install_hooks.py --remove`.
+
+Or skip the CLI entirely: click **"Install Claude Code Hooks"** in
+`vibe_monitor_app.py` (step 3 below) — same idempotent merge into the global
+`~/.claude/settings.json`.
+
+Once installed, every `SessionStart` / `UserPromptSubmit` / `PreToolUse` /
+`PostToolUse` / `Notification` / `Stop` / `SubagentStop` / `SessionEnd` /
+`PreCompact` hook event calls `vibe_monitor/report_status.py`, which forwards
+the status over a local socket to `vibe_monitor_app.py` (see below) - if
+that app isn't running, this is a silent no-op.
+
+### 2b. Optional: also wire up Codex CLI hooks
+
+```bash
+python3 install_codex_hooks.py            # merges into ~/.codex/hooks.json
+python3 install_codex_hooks.py --project  # or into ./.codex/hooks.json for just this project
+```
+
+Same idempotent merge/backup/`--dry-run`/`--remove` as `install_hooks.py`,
+or click **"Install Codex Hooks"** in `vibe_monitor_app.py`. `report_status.py`
+handles both agents - Codex's own hook system is a close port of Claude
+Code's, invoked here with `--agent codex --event <Name>` baked into the
+command rather than trusted from Codex's own payload.
+
+**Codex additionally requires manual trust**: after installing, run `/hooks`
+inside the Codex CLI to review and approve these entries - unlike Claude
+Code, they don't take effect just by being written to the config file. This
+is a newer, still-evolving Codex feature; if nothing shows up, check
+`/hooks` first and compare against
+[developers.openai.com/codex/hooks](https://developers.openai.com/codex/hooks).
+
+| hook event | status shown |
+|---|---|
+| `SessionStart`, `Stop`, `SessionEnd` | `Idle` |
+| `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `SubagentStop`, `PreCompact` | tool name (+ detail), or `Working` |
+| `Notification` (`permission_prompt` only) | `Waiting` |
+| `MessageDisplay` | `Thinking` (throttled to ~once/2.5s per session - clears a stale `Waiting` once Claude resumes after you answer a question/permission prompt, since no other hook fires for that) |
+
+`Notification` also fires for other sub-types - most commonly `idle_prompt`,
+after *every* turn simply because Claude finished and is waiting for your
+next message, no action needed from you. `install_hooks.py` installs it
+scoped to `"matcher": "permission_prompt"` so only a real blocking wait
+shows `Waiting` - otherwise it'd flip to `Waiting` after every single
+response, which looks like a bug.
+
+### 3. Run the monitor app and connect
+
+```bash
+python vibe_monitor_app.py
+```
+
+Or make it a clickable app (one-time setup):
+
+```bash
+python3 install_desktop_launcher.py            # installs to your app menu + Desktop
+python3 install_desktop_launcher.py --dry-run  # preview the .desktop file first
+python3 install_desktop_launcher.py --remove   # uninstall
+```
+
+Searchable in your app menu as "MOKUKU Vibe Monitor" afterward. First
+double-click on a new Desktop icon may prompt "Untrusted Application
+Launcher" in some file managers - click through it once.
+
+Either way, it's a small standalone window (separate from `app.py`): click
+**Scan**, pick your device, click **Connect**. It shows the device connection
+state, the current Claude Code status, a scrolling activity log, and an
+**"Install Claude Code Hooks"** button (step 2 above, if you skipped the
+CLI). Unlike
+the old headless daemon this replaces, nothing scans or connects
+automatically - you always know whether it's actually connected. It's not
+launched by the hooks either; run it yourself each session, and it refuses
+to start a second instance while one is already running (same socket).
+
+Connect and Disconnect both back up bleak's own D-Bus calls with a
+`bluetoothctl connect`/`disconnect` subprocess call, since bleak's calls can
+silently hang or fail on Linux/BlueZ. This matters most on disconnect - if
+the radio-level link stays up while the app thinks it's disconnected, MOKUKU
+never resumes advertising and won't show up in the next scan. Scanning uses
+`async with BleakScanner()` so an interrupted scan can't leave the adapter
+stuck and blocking future scans, and scan failures are logged rather than
+leaving the UI stuck on "Scanning...".
+
+The device side had a matching firmware bug: `ObdBleClientSetup()`
+(`IDF_SHARED/backend/BleClient.cpp`) called `BLEDevice::init()` again on
+every phone disconnect, which corrupted the already-running BLE stack and
+left MOKUKU permanently unable to advertise after the first disconnect -
+fixed by only calling it once, on the initial boot setup. `onDisconnect`
+also now directly calls `BLEDevice::startAdvertising()` itself instead of
+relying on it as an incidental side effect of that same
+`ObdBleClientSetup()`/`CreateBleService()` chain (which exists for an
+unrelated reason - restarting the OBD BLE *client* scan). The VibeCoding
+panel also now shows `Not Connected` as soon as the phone disconnects,
+instead of freezing on the last status it received.
+
+That covers a clean disconnect, but a crashed or suspended app can leave
+the BLE link nominally "up" for a while with no disconnect event at all -
+as a backstop, this app's every-2s time-sync write doubles as a heartbeat
+the panel expects to keep hearing; after 8s of silence it falls back to
+`Not Connected` on its own regardless of what BLE itself reports.
+
+### Manual testing (app must already be running)
+
+```bash
+python3 -m vibe_monitor report working --session test1 --project demo --tool Edit --detail main.c
+python3 -m vibe_monitor report working --session test2 --project demo --tool shell --agent codex
+python3 -m vibe_monitor status   # tracked sessions (tagged by agent), connected MOKUKU device, current state/text
+```
+
+Set `MOKUKU_VIBE_MONITOR_DRY_RUN=1` when invoking `vibe_monitor/report_status.py`
+directly to print what would be sent instead of actually sending it.

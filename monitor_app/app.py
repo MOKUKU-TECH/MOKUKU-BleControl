@@ -147,6 +147,19 @@ class SimpleWindow(QWidget):
         self.upload_button.clicked.connect(self.start_uploading_file)
         layout.addWidget(self.upload_button)
 
+        self.add_horizatal_line(layout)
+        vibe_label = QLabel("Vibe Coding Monitor")
+        vibe_label.setFont(self.subtitle_font)
+        vibe_label.setFixedSize(self.width, self.line_height)
+        layout.addWidget(vibe_label)
+
+        self.vibe_mode_button = QPushButton(
+            "Enable Vibe Coding Monitor Mode (left: status+fuel, right: time+duration+music, reboots device)",
+            self,
+        )
+        self.vibe_mode_button.clicked.connect(self.enable_vibe_mode)
+        layout.addWidget(self.vibe_mode_button)
+
         self.setLayout(layout)
 
     def test_process(self):
@@ -230,6 +243,33 @@ class SimpleWindow(QWidget):
         messager.push_string_message(50, panels_left)
         messager.push_string_message(51, panels_right)
         QMessageBox.information(self, "INFO", f"wifi {wifi_name} {wifi_pw} setup.")
+
+    def enable_vibe_mode(self):
+        if not ble_client_widget.ble_client.connected:
+            QMessageBox.warning(self, "WARNING", "Connect to MOKUKU over BLE first.")
+            return
+        reply = QMessageBox.question(
+            self,
+            "Enable Vibe Coding Monitor Mode",
+            "This sets left eye panels to VibeCoding(status)+Fuel and right eye "
+            "panels to Time+Duration+Music, disables OBD/canbus BLE scanning "
+            "(falls back to GPS mode - avoids the OBD scan competing with the "
+            "phone/host BLE connection), then reboots the device to apply the "
+            "new layout. Run `install_hooks.py` in this folder (see "
+            "vibe_monitor/README.md) so Claude Code keeps the status text "
+            "updated after reconnecting. Continue?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if reply != QMessageBox.Yes:
+            return
+        messager.push_string_message(50, "11-5")  # PANEL_TYPE_VIBECODING + PANEL_TYPE_FUEL
+        messager.push_string_message(51, "9-7-10")
+        messager.push_command(35)  # DisableBleScan(): stop OBD/canbus scanning, fall back to GPS mode
+        messager.push_reboot()
+        QMessageBox.information(
+            self, "INFO", "Vibe Coding Monitor Mode set. Device is rebooting - reconnect after it comes back up."
+        )
 
     # Override closeEvent to add custom logic
     def closeEvent(self, event):

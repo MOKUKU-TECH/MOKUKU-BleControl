@@ -2,6 +2,32 @@
 
 This repository documents the **Bluetooth Low Energy (BLE) protocol** used by MOKUKU devices.
 
+## Quick Start: Vibe Coding Mode
+
+Mirror a Claude Code (or Codex CLI) session's live status on the left eye. Full details in [doc/VIBE_CODING_MONITOR.md](../doc/VIBE_CODING_MONITOR.md).
+
+```bash
+# 1. Build & flash the left-eye firmware (one-time)
+. $HOME/esp/esp-idf/export.sh
+./scripts/build_idf.sh 1
+idf.py -B IDF_MOKUKU/build_1 flash monitor
+
+# 2. Set up the Python env (first time only)
+conda env create -f BleControl/monitor_app/ble_ctrl_env.yaml
+conda activate ble_ctrl_env
+
+# 3. Enable the panel layout on the device (one-time)
+python BleControl/monitor_app/app.py     # Scan → Connect → "Enable Vibe Coding Monitor Mode"
+
+# 4. Install Claude Code hooks (one-time)
+python3 BleControl/monitor_app/install_hooks.py       # or --project for this repo only
+
+# 5. Run the monitor and connect (every session)
+python BleControl/monitor_app/vibe_monitor_app.py     # Scan → pick device → Connect
+```
+
+Once connected, the left eye reflects the session state: `Idle` (no tint), `Working` (red-orange), `Waiting` (pulsing) — with the tool/file and project name shown live.
+
 The protocol defines two BLE characteristics:
 
 | Characteristic   | UUID                                   | Purpose                                 |
@@ -15,7 +41,9 @@ The protocol defines two BLE characteristics:
 - [Transfer Message](#2-transfer-message)
 - [Download File from MOKUKU](#3-download-file-from-mokuku)
 - [Upload File to MOKUKU](#4-upload-file-to-mokuku)
+- [DIY Configuration File](#5-diy-configuration-file)
 - [Demo](#6-demo) : **see more detailed doc in 'monitor_app' subfolder.** [Python BLE Example](./monitor_app/readme.md)
+- [Vibe Coding Monitor Mode](#7-vibe-coding-monitor-mode) : reflect a Claude Code session's live status on the velocity panel
 - [License](#license)
 
 # 1. Transfer Data
@@ -58,6 +86,8 @@ Used for **real-time dashboard updates**.
 | 6     | Reboot             |
 | 10    | Toggle stereo mode |
 | 20    | Keep Idling        |
+| 34    | Enable OBD/canbus BLE scan (left eye) |
+| 35    | Disable OBD/canbus BLE scan, fall back to GPS mode (left eye) |
 | 43    | Left click         |
 | 53    | Right click        |
 | 66    | Left OTA update    |
@@ -137,6 +167,7 @@ typedef enum {
   PANEL_TYPE_TRAJECTORY = 8,
   PANEL_TYPE_TIME = 9,
   PANEL_TYPE_MUSIC = 10,
+  PANEL_TYPE_VIBECODING = 11,
 } PANEL_TYPE;
 ```
 
@@ -155,6 +186,22 @@ Need **reboot** to make effect.
 | 2    | String length |
 | 3..N | right eye panels array |
 
+
+## VibeCoding Panel Status Text
+
+Sets the text shown on the dedicated VibeCoding panel (`PANEL_TYPE_VIBECODING`,
+id `11` - see [Panels choice setup](#panels-choice-setup)), wrapping across up to
+~3 lines. Applies immediately, **no reboot needed**. Used by
+[Vibe Coding Monitor Mode](#7-vibe-coding-monitor-mode) to show a live coding-agent
+status.
+
+| Byte | Value         |
+| ---- | ------------- |
+| 1    | `52`          |
+| 2    | String length |
+| 3..N | status text (≤31 bytes) |
+
+`string length = 0` is ignored - this panel has no numeric fallback to revert to.
 
 ## File System Commands
 
@@ -413,6 +460,57 @@ python monitor_app/app.py
 | ------- | -------------------- |
 | <video src="https://github.com/user-attachments/assets/7ea8c529-6754-4a41-8ce0-084be0e38f3e">    | <video src="https://github.com/user-attachments/assets/c99fa5b1-677f-428a-a3d0-675f6aeb1d7c">  |
 
+
+# 7. Vibe Coding Monitor Mode
+
+Adds a dedicated VibeCoding panel (`PANEL_TYPE_VIBECODING`, id `11`) showing live
+status for a coding-agent session (e.g. Claude Code) — what it's doing right now
+("Thinking", "Edit: main.c", "Waiting", "Idle") — set via the
+[VibeCoding Panel Status Text](#vibecoding-panel-status-text) command.
+
+**See more detailed doc in 'monitor_app' subfolder.** [Vibe Coding Monitor](./monitor_app/readme.md#vibe-coding-monitor-mode)
+
+## 1. Enable the mode on the device
+
+Connect with `monitor_app/app.py` and click **"Enable Vibe Coding Monitor Mode"**. This
+sets the left eye to `11-5` (VibeCoding + Fuel) and the right eye to `9-7-10`
+(Time + Duration + Music), disables OBD/canbus BLE scanning (command `35`, falls
+back to GPS mode — otherwise the left eye's background OBD-scan role fights
+whatever's holding the phone/host connection), then reboots the device to apply
+the new layout.
+
+## 2. Wire up Claude Code hooks
+
+```
+python3 monitor_app/install_hooks.py
+```
+
+Merges Claude Code hooks into `~/.claude/settings.json` (idempotent, only adds
+entries, backs up the previous file). Each hook event forwards a status over a
+local socket to `monitor_app/vibe_monitor_app.py` - if that app isn't running,
+this is a silent no-op.
+
+## 3. Run the monitor app and connect
+
+```
+cd monitor_app
+python vibe_monitor_app.py
+```
+
+A standalone window: click **Scan**, pick your device, click **Connect**. It
+shows the device connection state, the current Claude Code status, and an
+activity log - the BLE connection is something you explicitly start and can
+see the state of, not an invisible background scan/connect loop. Run it
+yourself each session; it isn't launched by the hooks, and it refuses to
+start a second instance while one is already running.
+
+Manual testing without live hooks (app must already be running):
+
+```
+cd monitor_app
+python3 -m vibe_monitor report working --session test1 --project demo --tool Edit --detail main.c
+python3 -m vibe_monitor status
+```
 
 # License
 

@@ -94,6 +94,12 @@ class MokukuMessager:
     def push_wifi_pw(self, wifi_pw):
         self.push_string_message(8, wifi_pw)
 
+    def push_reboot(self):
+        # id=6 on the ack characteristic triggers esp_restart() immediately.
+        # Note: this is NOT the same as command byte 6 (push_command(6)),
+        # which is a different, unrelated code path.
+        self.push_ack_message(list(struct.pack("<B", 6)))
+
     def push_string_message(self, id, message):
         str_bytes = message.encode("utf-8")
         if len(str_bytes) > 255:
