@@ -4,9 +4,7 @@ No I/O of its own (no sockets, no BLE) - see vibe_monitor_app.py for that.
 """
 import os
 import struct
-import tempfile
 import time
-from pathlib import Path
 
 CHARACTERISTIC_UUID_MAIN = "beb5483e-36e1-4688-b7f5-ea07361b26a8"
 CHARACTERISTIC_UUID_ACK = "d222e154-1a80-4e71-9a63-2aa2c0ce0a8c"
@@ -14,11 +12,37 @@ DEVICE_NAME_PREFIX = "mokuku"
 STATUS_TEXT_MAX_BYTES = 63  # firmware's two 32-byte main/detail buffers (31 usable bytes each) + 1 newline separator
 PROJECT_NAME_MAX_BYTES = 31  # firmware VIBECODING_PROJECT_BUFFER_SIZE (32) minus the null terminator
 
-# vibe_monitor_app.py listens here; report_status.py connects here. A plain
-# well-known path (no lock file/pidfile) - the app is started and stopped
-# manually by the user, not lazily spawned, so there's no "ensure a daemon is
-# running" dance needed here anymore.
-SOCK_PATH = Path(tempfile.gettempdir()) / f"mokuku-vibe-monitor-{os.getuid()}.sock"
+# vibe_monitor_app.py listens here; report_status.py connects here. A TCP
+# loopback socket (not a Unix domain socket) so the exact same code runs on
+# Windows, where AF_UNIX and os.getuid() don't exist. Bound to 127.0.0.1
+# only, never a routable interface - this is strictly local IPC between the
+# hook script and the app on the same machine. The app is started and
+# stopped manually by the user, so there's no lock file / "ensure a daemon
+# is running" dance needed around it.
+IPC_HOST = "127.0.0.1"
+IPC_PORT = 47615
+
+# Panel arrays and commands for the one-time "Enable Vibe Coding Monitor
+# Mode" setup, sent on the ACK characteristic (see encode_command_message).
+VIBE_MODE_LEFT_PANELS = "11-5"     # PANEL_TYPE_VIBECODING + PANEL_TYPE_FUEL
+VIBE_MODE_RIGHT_PANELS = "9-7-10"  # Time + Duration + Music
+MSG_ID_LEFT_PANEL_ARRAY = 50
+MSG_ID_RIGHT_PANEL_ARRAY = 51
+COMMAND_DISABLE_BLE_SCAN = 35      # DisableBleScan(): stop OBD/canbus scanning, fall back to GPS mode
+
+# WiFi credentials + firmware URL for HTTP OTA, sent as string messages on the
+# ACK characteristic (the device downloads the firmware over this network).
+MSG_ID_WIFI_NAME = 7
+MSG_ID_WIFI_PASSWORD = 8
+MSG_ID_OTA_HTTP_URL = 9
+
+# OTA triggers, sent as command bytes (encode_command_message). The right eye
+# must update before the left: the left/INS eye owns the BLE link, so updating
+# it first can interrupt the right eye's still-running update - hence the delay
+# between the two.
+COMMAND_OTA_RIGHT_EYE = 67  # forwarded over inter-eye UART to the right eye
+COMMAND_OTA_LEFT_EYE = 66   # runs on the local left/INS/BLE eye
+OTA_EYE_ORDER_DELAY_SECONDS = 0.5
 
 SESSION_STALE_SECONDS = 30 * 60        # sessions with no liveness pid only
 SESSION_ABS_STALE_SECONDS = 24 * 3600  # backstop even with a live pid (pid-reuse paranoia)
@@ -121,6 +145,26 @@ def encode_status_message(state, project, text):
     project_bytes = (project or "").encode("utf-8")[:PROJECT_NAME_MAX_BYTES]
     text_bytes = _truncate_detail(text, STATUS_TEXT_MAX_BYTES)
     return bytes([52, state, len(project_bytes)]) + project_bytes + bytes([len(text_bytes)]) + text_bytes
+
+
+def encode_string_message(msg_id, text):
+    """A length-prefixed ASCII message on the ACK characteristic - the wire
+    format the reference app's messager.push_string_message() uses for the
+    panel-array commands (50/51)."""
+    payload = text.encode("utf-8")
+    return bytes([msg_id, len(payload)]) + payload
+
+
+def encode_command_message(command):
+    """ACK message id 1 carrying a single command byte - matches
+    messager.push_command() (e.g. command 35 = DisableBleScan)."""
+    return bytes([1, command])
+
+
+def encode_reboot_message():
+    """ACK message id 6 triggers esp_restart() on the device - matches
+    messager.push_reboot()."""
+    return bytes([6])
 
 
 def format_status(info):

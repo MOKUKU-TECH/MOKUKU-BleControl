@@ -28,8 +28,10 @@ from PyQt5.QtCore import Qt, QObject, pyqtSignal
 from PyQt5.QtWidgets import (
     QApplication,
     QFrame,
+    QGroupBox,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QListWidget,
     QListWidgetItem,
     QMessageBox,
@@ -45,16 +47,35 @@ from common.log import logging
 from vibe_monitor.protocol import (
     CHARACTERISTIC_UUID_ACK,
     CHARACTERISTIC_UUID_MAIN,
+    COMMAND_DISABLE_BLE_SCAN,
+    COMMAND_OTA_LEFT_EYE,
+    COMMAND_OTA_RIGHT_EYE,
     DEVICE_NAME_PREFIX,
-    SOCK_PATH,
+    IPC_HOST,
+    IPC_PORT,
+    MSG_ID_LEFT_PANEL_ARRAY,
+    MSG_ID_OTA_HTTP_URL,
+    MSG_ID_RIGHT_PANEL_ARRAY,
+    MSG_ID_WIFI_NAME,
+    MSG_ID_WIFI_PASSWORD,
+    OTA_EYE_ORDER_DELAY_SECONDS,
     STATE_NAMES,
+    VIBE_MODE_LEFT_PANELS,
+    VIBE_MODE_RIGHT_PANELS,
     SessionTracker,
+    encode_command_message,
+    encode_reboot_message,
     encode_status_message,
+    encode_string_message,
     encode_time_sync_message,
 )
 
 REFRESH_INTERVAL_SECONDS = 2
 SCAN_TIMEOUT_SECONDS = 4.0
+DEFAULT_OTA_URL = "https://prod-cn-hk-alicloud-mokuku-deepmirror-s3.oss-cn-hongkong.aliyuncs.com/DEBUG/vc"
+
+
+IS_LINUX = sys.platform.startswith("linux")
 
 
 async def _bluetoothctl_connect(address, timeout=15.0):
@@ -65,7 +86,12 @@ async def _bluetoothctl_connect(address, timeout=15.0):
     without honoring asyncio's timeout/cancellation) - `bluetoothctl
     connect` against the same bluetoothd doesn't have this problem, so it
     does the actual radio connection; bleak is only used afterwards for
-    GATT reads/writes on the now-established link."""
+    GATT reads/writes on the now-established link. This is a Linux-only
+    workaround; on Windows/macOS bleak's native backend is used directly, so
+    this returns True (nothing to pre-connect) and the caller proceeds to
+    bleak."""
+    if not IS_LINUX:
+        return True
     try:
         proc = await asyncio.create_subprocess_exec(
             "bluetoothctl", "connect", address,
@@ -85,7 +111,10 @@ async def _bluetoothctl_disconnect(address, timeout=10.0):
     connected) never resumes BLE advertising - making it invisible to any
     later scan even though the app itself looks disconnected. Running
     `bluetoothctl disconnect` afterwards forces the actual radio-level
-    teardown regardless of whether bleak's own call succeeded."""
+    teardown regardless of whether bleak's own call succeeded. No-op on
+    non-Linux (bleak's native backend handles teardown there)."""
+    if not IS_LINUX:
+        return
     try:
         proc = await asyncio.create_subprocess_exec(
             "bluetoothctl", "disconnect", address,
@@ -159,6 +188,18 @@ class Backend(QObject):
     def select_session(self, session_id):
         """session_id=None reverts to automatic (most recently active)."""
         asyncio.run_coroutine_threadsafe(self._select_session(session_id), self.loop)
+
+    def enable_vibe_mode(self):
+        asyncio.run_coroutine_threadsafe(self._enable_vibe_mode(), self.loop)
+
+    def set_wifi(self, name, password):
+        asyncio.run_coroutine_threadsafe(self._set_wifi(name, password), self.loop)
+
+    def set_ota_url(self, url):
+        asyncio.run_coroutine_threadsafe(self._set_ota_url(url), self.loop)
+
+    def run_ota(self):
+        asyncio.run_coroutine_threadsafe(self._run_ota(), self.loop)
 
     # --- async implementation (runs on the background loop) ---
 
@@ -245,14 +286,82 @@ class Backend(QObject):
         self._last_claude_status = None
         self._emit_current_status()
 
-    # --- Unix socket server (receives status updates from report_status.py) ---
+    def _require_connected(self, action):
+        if not self.client or not self.client.is_connected:
+            self._log(f"{action}: connect to MOKUKU first")
+            return False
+        return True
+
+    async def _write_ack(self, message, timeout=10.0):
+        await asyncio.wait_for(self.client.write_gatt_char(CHARACTERISTIC_UUID_ACK, message), timeout=timeout)
+
+    async def _enable_vibe_mode(self):
+        """One-time device setup: set the left/right panel layout for vibe
+        coding, disable OBD/canbus BLE scanning, and reboot to apply. Same
+        sequence app.py sends - folded in here so the packaged app fully
+        replaces app.py for end users. The device reboots and drops the BLE
+        link at the end (the reboot write may itself not ack for that
+        reason), so this is fire-and-forget; the user reconnects afterwards."""
+        if not self._require_connected("Enable Vibe Mode"):
+            return
+        messages = (
+            encode_string_message(MSG_ID_LEFT_PANEL_ARRAY, VIBE_MODE_LEFT_PANELS),
+            encode_string_message(MSG_ID_RIGHT_PANEL_ARRAY, VIBE_MODE_RIGHT_PANELS),
+            encode_command_message(COMMAND_DISABLE_BLE_SCAN),
+            encode_reboot_message(),
+        )
+        try:
+            for msg in messages:
+                await self._write_ack(msg)
+        except Exception as exc:
+            self._log(f"Enable Vibe Mode: device rebooting (or write failed): {exc}")
+            return
+        self._log("Enable Vibe Mode: sent panel layout, disabled OBD scan, rebooting device")
+
+    async def _set_wifi(self, name, password):
+        if not self._require_connected("Set WiFi"):
+            return
+        try:
+            await self._write_ack(encode_string_message(MSG_ID_WIFI_NAME, name))
+            await self._write_ack(encode_string_message(MSG_ID_WIFI_PASSWORD, password))
+        except Exception as exc:
+            self._log(f"Set WiFi failed: {exc}")
+            return
+        self._log(f"Set WiFi: {name}")
+
+    async def _set_ota_url(self, url):
+        if not self._require_connected("Set OTA URL"):
+            return
+        try:
+            await self._write_ack(encode_string_message(MSG_ID_OTA_HTTP_URL, url))
+        except Exception as exc:
+            self._log(f"Set OTA URL failed: {exc}")
+            return
+        self._log(f"Set OTA URL: {url}")
+
+    async def _run_ota(self):
+        """Trigger HTTP OTA on both eyes, right eye first. WiFi + firmware URL
+        must already be set (see _set_wifi/_set_ota_url). The right eye updates
+        first; after OTA_EYE_ORDER_DELAY_SECONDS the left/INS eye - which owns
+        this BLE link - updates and drops the connection, so the left trigger
+        is fire-and-forget."""
+        if not self._require_connected("OTA"):
+            return
+        try:
+            await self._write_ack(encode_command_message(COMMAND_OTA_RIGHT_EYE))
+            self._log("OTA: triggered right eye; waiting before left eye...")
+            await asyncio.sleep(OTA_EYE_ORDER_DELAY_SECONDS)
+            await self._write_ack(encode_command_message(COMMAND_OTA_LEFT_EYE))
+        except Exception as exc:
+            self._log(f"OTA: right eye triggered; left-eye write error (device may be updating): {exc}")
+            return
+        self._log("OTA: triggered right eye, then left eye")
+
+    # --- TCP loopback server (receives status updates from report_status.py) ---
 
     async def _run_server(self):
-        SOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
-        if SOCK_PATH.exists():
-            SOCK_PATH.unlink()
-        server = await asyncio.start_unix_server(self._handle_client, path=str(SOCK_PATH))
-        self._log(f"Listening for Claude Code status on {SOCK_PATH}")
+        server = await asyncio.start_server(self._handle_client, host=IPC_HOST, port=IPC_PORT)
+        self._log(f"Listening for Claude Code status on {IPC_HOST}:{IPC_PORT}")
         async with server:
             await server.serve_forever()
 
@@ -414,6 +523,9 @@ class MainWindow(QWidget):
 
         self.claude_status_label = QLabel("Idle")
         self.claude_status_label.setStyleSheet("font-size: 20px;")
+        # Wrap long detail lines (e.g. a long shell command / file path) onto
+        # multiple rows instead of forcing the window wider to fit one line.
+        self.claude_status_label.setWordWrap(True)
         layout.addWidget(self.claude_status_label)
 
         sessions_label = QLabel("Claude Code Sessions (click to choose which one to send)")
@@ -446,6 +558,12 @@ class MainWindow(QWidget):
         self.remove_codex_hooks_button.clicked.connect(self._on_remove_codex_hooks_clicked)
         layout.addWidget(self.remove_codex_hooks_button)
 
+        self.ota_toggle_button = QPushButton("Firmware Update (OTA) ▾", self)
+        self.ota_toggle_button.setCheckable(True)
+        self.ota_toggle_button.toggled.connect(self._on_ota_toggled)
+        layout.addWidget(self.ota_toggle_button)
+        layout.addWidget(self._build_ota_group())
+
         layout.addWidget(self._hline())
 
         log_label = QLabel("Activity Log")
@@ -456,7 +574,7 @@ class MainWindow(QWidget):
         self.log_view.setReadOnly(True)
         layout.addWidget(self.log_view)
 
-        socket_label = QLabel(f"Socket: {SOCK_PATH}")
+        socket_label = QLabel(f"Listening on {IPC_HOST}:{IPC_PORT}")
         socket_label.setStyleSheet("color: gray; font-size: 10px;")
         layout.addWidget(socket_label)
 
@@ -468,6 +586,55 @@ class MainWindow(QWidget):
         line.setFrameShape(QFrame.HLine)
         line.setFrameShadow(QFrame.Sunken)
         return line
+
+    def _build_ota_group(self):
+        """The collapsible OTA panel: WiFi credentials, firmware URL, and the
+        Start-OTA trigger. Hidden until the toggle button is checked."""
+        self.ota_group = QGroupBox("Firmware Update (OTA)")
+        ota_layout = QVBoxLayout()
+
+        self.enable_vibe_mode_button = QPushButton("Enable Vibe Coding Monitor Mode (one-time, reboots device)", self)
+        self.enable_vibe_mode_button.clicked.connect(self._on_enable_vibe_mode_clicked)
+        ota_layout.addWidget(self.enable_vibe_mode_button)
+
+        ota_layout.addWidget(QLabel("WiFi (the device downloads the firmware over this network)"))
+        wifi_row = QHBoxLayout()
+        self.wifi_name_input = QLineEdit(self)
+        self.wifi_name_input.setPlaceholderText("WiFi name")
+        self.wifi_pw_input = QLineEdit(self)
+        self.wifi_pw_input.setPlaceholderText("WiFi password")
+        self.wifi_pw_input.setEchoMode(QLineEdit.Password)
+        self.set_wifi_button = QPushButton("Set WiFi", self)
+        self.set_wifi_button.clicked.connect(self._on_set_wifi_clicked)
+        wifi_row.addWidget(self.wifi_name_input)
+        wifi_row.addWidget(self.wifi_pw_input)
+        wifi_row.addWidget(self.set_wifi_button)
+        ota_layout.addLayout(wifi_row)
+
+        ota_layout.addWidget(QLabel("Firmware URL"))
+        url_row = QHBoxLayout()
+        self.ota_url_input = QLineEdit(self)
+        self.ota_url_input.setPlaceholderText("http://host/path/firmware.bin")
+        self.ota_url_input.setText(DEFAULT_OTA_URL)
+        self.set_ota_url_button = QPushButton("Set URL", self)
+        self.set_ota_url_button.clicked.connect(self._on_set_ota_url_clicked)
+        url_row.addWidget(self.ota_url_input)
+        url_row.addWidget(self.set_ota_url_button)
+        ota_layout.addLayout(url_row)
+
+        self.start_ota_button = QPushButton("Start OTA (right eye, then left eye)", self)
+        self.start_ota_button.clicked.connect(self._on_start_ota_clicked)
+        ota_layout.addWidget(self.start_ota_button)
+
+        # Disabled until connected - the first connection_changed event flips
+        # them on (see _on_connection_changed).
+        for button in (self.enable_vibe_mode_button, self.set_wifi_button,
+                       self.set_ota_url_button, self.start_ota_button):
+            button.setEnabled(False)
+
+        self.ota_group.setLayout(ota_layout)
+        self.ota_group.setVisible(False)
+        return self.ota_group
 
     def _on_devices_found(self, devices):
         self.devices = devices
@@ -506,6 +673,9 @@ class MainWindow(QWidget):
         self.connect_button.setEnabled(not is_connected and not is_busy and bool(self.devices))
         self.disconnect_button.setEnabled(is_connected)
         self.reconnect_button.setEnabled(not is_connected and not is_busy and self.last_connected_address is not None)
+        for button in (self.enable_vibe_mode_button, self.set_wifi_button,
+                       self.set_ota_url_button, self.start_ota_button):
+            button.setEnabled(is_connected)
 
     def _on_log_message(self, message):
         self.log_view.append(message)
@@ -529,6 +699,60 @@ class MainWindow(QWidget):
     def _on_session_clicked(self, item):
         self.backend.select_session(item.data(Qt.UserRole))
 
+    def _on_enable_vibe_mode_clicked(self):
+        reply = QMessageBox.question(
+            self,
+            "Enable Vibe Coding Monitor Mode",
+            "This sets the left eye to VibeCoding(status)+Fuel and the right eye to "
+            "Time+Duration+Music, disables OBD/canbus BLE scanning (falls back to GPS "
+            "mode, so the OBD scan doesn't compete with this connection), then reboots "
+            "the device to apply the new layout. It's a one-time step. Continue?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if reply != QMessageBox.Yes:
+            return
+        self.backend.enable_vibe_mode()
+        QMessageBox.information(
+            self, "Enable Vibe Coding Monitor Mode",
+            "Sent. The device is rebooting - reconnect after it comes back up.")
+
+    def _on_ota_toggled(self, checked):
+        self.ota_group.setVisible(checked)
+        self.ota_toggle_button.setText(f"Firmware Update (OTA) {'▴' if checked else '▾'}")
+
+    def _on_set_wifi_clicked(self):
+        name = self.wifi_name_input.text().strip()
+        password = self.wifi_pw_input.text().strip()
+        if not name or not password:
+            QMessageBox.warning(self, "Set WiFi", "Enter both a WiFi name and password.")
+            return
+        self.backend.set_wifi(name, password)
+
+    def _on_set_ota_url_clicked(self):
+        url = self.ota_url_input.text().strip()
+        if not url:
+            QMessageBox.warning(self, "Set OTA URL", "Enter the firmware URL.")
+            return
+        self.backend.set_ota_url(url)
+
+    def _on_start_ota_clicked(self):
+        reply = QMessageBox.question(
+            self,
+            "Start OTA",
+            "Update firmware over the air? The right eye updates first, then the left "
+            "eye ~0.5s later. Make sure WiFi and the firmware URL are set first, keep "
+            "the device powered, and don't disconnect until it finishes. Continue?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if reply != QMessageBox.Yes:
+            return
+        self.backend.run_ota()
+        QMessageBox.information(
+            self, "Start OTA",
+            "OTA triggered (right eye, then left eye). The device reboots when done.")
+
     def _on_install_hooks_clicked(self):
         # Global (~/.claude/settings.json), not --project: this button has
         # no notion of "current project" (it's a standalone app, often
@@ -536,7 +760,7 @@ class MainWindow(QWidget):
         # every Claude Code session on this machine, matching plain
         # `python3 install_hooks.py` from the CLI.
         path = install_hooks.settings_path(project=False)
-        command = f"{sys.executable} {install_hooks.REPORT_SCRIPT}"
+        command = install_hooks.report_command(sys.executable)
         try:
             settings = install_hooks.load_settings(path)
             count = install_hooks.install(settings, command)
@@ -571,7 +795,7 @@ class MainWindow(QWidget):
 
     def _on_remove_hooks_clicked(self):
         path = install_hooks.settings_path(project=False)
-        command = f"{sys.executable} {install_hooks.REPORT_SCRIPT}"
+        command = install_hooks.report_command(sys.executable)
         try:
             settings = install_hooks.load_settings(path)
             count = install_hooks.remove(settings, command)
@@ -601,27 +825,41 @@ class MainWindow(QWidget):
         QMessageBox.information(self, "Codex Hooks", message)
 
     def closeEvent(self, event):
-        self.backend.disconnect()
+        reply = QMessageBox.question(
+            self,
+            "Quit",
+            "Quit the MOKUKU Vibe Monitor? MOKUKU will stop receiving status updates "
+            "and fall back to \"Not Connected\".",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if reply != QMessageBox.Yes:
+            event.ignore()
+            return
+        if self.backend.loop is not None:  # skip if closed before the backend loop started
+            self.backend.disconnect()
         event.accept()
 
 
 def _another_instance_running():
     try:
-        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
-            sock.settimeout(0.5)
-            sock.connect(str(SOCK_PATH))
-        return True
+        with socket.create_connection((IPC_HOST, IPC_PORT), timeout=0.5):
+            return True
     except OSError:
         return False
 
 
-if __name__ == "__main__":
+def run_gui():
     if _another_instance_running():
-        print(f"Another vibe_monitor_app.py already seems to be running (socket {SOCK_PATH} is live).\n"
+        print(f"Another vibe monitor already seems to be running ({IPC_HOST}:{IPC_PORT} is live).\n"
               "Quit that one first - two instances would fight over the same MOKUKU connection.", file=sys.stderr)
-        sys.exit(1)
+        return 1
 
     app = QApplication(sys.argv)
     window = MainWindow()
     window.show()
-    sys.exit(app.exec_())
+    return app.exec_()
+
+
+if __name__ == "__main__":
+    sys.exit(run_gui())

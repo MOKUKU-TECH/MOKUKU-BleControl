@@ -1,0 +1,7 @@
+# Runtime dependencies for vibe_monitor_app / main.py (the packaged app).
+# For the pip-only build path used by packaging/ and CI - developers can
+# still use ble_ctrl_env.yaml with conda instead. bleak pulls in the right
+# per-platform BLE backend on its own (dbus-fast on Linux, winrt on Windows).
+bleak==0.22.3
+PyQt5==5.15.11
+coloredlogs==15.0.1

@@ -11,8 +11,11 @@ import os
 import socket
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from protocol import SOCK_PATH  # noqa: E402
+try:
+    from .protocol import IPC_HOST, IPC_PORT
+except ImportError:  # run as a bare script (source hook install), not as a package
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from protocol import IPC_HOST, IPC_PORT  # noqa: E402
 
 _CONNECT_TIMEOUT = 1.0
 
@@ -20,9 +23,8 @@ _CONNECT_TIMEOUT = 1.0
 def _send_message(message, timeout=_CONNECT_TIMEOUT, expect_reply=False):
     line = json.dumps(message) + "\n"
     try:
-        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+        with socket.create_connection((IPC_HOST, IPC_PORT), timeout=timeout) as sock:
             sock.settimeout(timeout)
-            sock.connect(str(SOCK_PATH))
             sock.sendall(line.encode())
             if expect_reply:
                 data = sock.makefile().readline()

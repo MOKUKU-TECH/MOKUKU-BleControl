@@ -27,8 +27,11 @@ import tempfile
 import time
 from pathlib import Path
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import ipc_client  # noqa: E402
+try:
+    from . import ipc_client
+except ImportError:  # run as a bare script (source hook install), not as a package
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import ipc_client  # noqa: E402
 
 STATUS_BY_EVENT = {
     "SessionStart": "idle",
@@ -154,10 +157,10 @@ def map_event(event, agent, event_name):
     return status, tool, detail
 
 
-def main():
-    agent, event_override = parse_cli_args(sys.argv[1:])
+def main(argv=None):
+    agent, event_override = parse_cli_args(sys.argv[1:] if argv is None else argv)
 
-    raw = sys.stdin.read()
+    raw = sys.stdin.read() if sys.stdin else ""  # windowed exe may have no stdin attached
     try:
         event = json.loads(raw) if raw.strip() else {}
     except json.JSONDecodeError:
