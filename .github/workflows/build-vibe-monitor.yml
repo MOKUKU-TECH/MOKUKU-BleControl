@@ -5,11 +5,19 @@ name: Build Vibe Monitor
 # no Python environment needed on the target machine. Artifacts are attached
 # to the run; pushing a tag also publishes them to a GitHub Release.
 on:
+  # Only build on push for the default branches and release tags. PR branches
+  # are covered by the pull_request trigger below - listing a PR's branch here
+  # too would fire both events on every push and run the workflow twice.
   push:
-    branches: [master, main, compress_app]
+    branches: [master, main]
     tags: ["v*"]
   pull_request:
   workflow_dispatch:
+
+# Supersede in-progress runs for the same branch/PR when a new push arrives.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
