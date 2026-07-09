@@ -78,7 +78,11 @@ async def _bluetoothctl_connect(address, timeout=15.0):
     connect` against the same bluetoothd doesn't have this problem, so it
     does the actual radio connection; bleak is only used afterwards for
     GATT reads/writes on the now-established link. This is a Linux-only
-    workaround; on Windows/macOS bleak's native backend is used directly."""
+    workaround; on Windows/macOS bleak's native backend is used directly, so
+    this returns True (nothing to pre-connect) and the caller proceeds to
+    bleak."""
+    if not IS_LINUX:
+        return True
     try:
         proc = await asyncio.create_subprocess_exec(
             "bluetoothctl", "connect", address,
@@ -98,7 +102,10 @@ async def _bluetoothctl_disconnect(address, timeout=10.0):
     connected) never resumes BLE advertising - making it invisible to any
     later scan even though the app itself looks disconnected. Running
     `bluetoothctl disconnect` afterwards forces the actual radio-level
-    teardown regardless of whether bleak's own call succeeded."""
+    teardown regardless of whether bleak's own call succeeded. No-op on
+    non-Linux (bleak's native backend handles teardown there)."""
+    if not IS_LINUX:
+        return
     try:
         proc = await asyncio.create_subprocess_exec(
             "bluetoothctl", "disconnect", address,
@@ -199,7 +206,7 @@ class Backend(QObject):
     async def _connect(self, address):
         self.connection_changed.emit("connecting", address)
         self._log(f"Connecting to {address}...")
-        if IS_LINUX and not await _bluetoothctl_connect(address):
+        if not await _bluetoothctl_connect(address):
             self._log(f"Failed to connect to {address}")
             self.connection_changed.emit("disconnected", "")
             return
@@ -235,7 +242,7 @@ class Backend(QObject):
             except Exception:
                 pass
         self.client = None
-        if address and IS_LINUX:
+        if address:
             # Belt and suspenders: force the radio-level disconnect via
             # bluetoothctl too, regardless of whether bleak's own
             # disconnect() above actually succeeded - see

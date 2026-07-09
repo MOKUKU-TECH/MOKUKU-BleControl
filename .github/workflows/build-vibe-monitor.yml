@@ -18,11 +18,19 @@ jobs:
       matrix:
         include:
           - os: windows-latest
-            script: powershell -ExecutionPolicy Bypass -File packaging/build.ps1
+            script: powershell -ExecutionPolicy Bypass -File packaging/build.ps1 -Name MOKUKU-Vibe-Monitor-windows
             artifact: MOKUKU-Vibe-Monitor-windows
-          - os: ubuntu-latest
-            script: bash packaging/build.sh
-            artifact: MOKUKU-Vibe-Monitor-linux
+          # Two Linux builds: PyInstaller bundles libpython but not glibc, so
+          # a bundle requires >= the build machine's glibc. The 22.04 build
+          # (glibc 2.35) runs on older systems; the 24.04 build (glibc 2.39)
+          # is for matching-or-newer ones. Distinct zip names so they don't
+          # collide on a release.
+          - os: ubuntu-22.04
+            script: bash packaging/build.sh MOKUKU-Vibe-Monitor-linux-ubuntu22.04
+            artifact: MOKUKU-Vibe-Monitor-linux-ubuntu22.04
+          - os: ubuntu-24.04
+            script: bash packaging/build.sh MOKUKU-Vibe-Monitor-linux-ubuntu24.04
+            artifact: MOKUKU-Vibe-Monitor-linux-ubuntu24.04
     runs-on: ${{ matrix.os }}
     defaults:
       run:
@@ -37,12 +45,18 @@ jobs:
       - name: Build bundle
         run: ${{ matrix.script }}
 
+      # Upload the onedir folder, not the .zip the build script also makes -
+      # upload-artifact always zips its input, so handing it a .zip produces a
+      # zip-inside-a-zip. Uploading the folder yields a single zip named
+      # <artifact>.zip whose contents are the app itself.
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
-          path: monitor_app/dist/*.zip
+          path: "monitor_app/dist/MOKUKU Vibe Monitor"
           if-no-files-found: error
 
+      # The release asset is the build script's own zip (wrapped in a
+      # "MOKUKU Vibe Monitor" folder), attached only on tags.
       - name: Attach to release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2

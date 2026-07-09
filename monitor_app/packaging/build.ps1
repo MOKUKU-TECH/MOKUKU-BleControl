@@ -1,4 +1,6 @@
 # Build the MOKUKU Vibe Monitor onedir bundle on Windows and zip it.
+# -Name sets the zip basename (default MOKUKU-Vibe-Monitor-windows).
+param([string]$Name = "MOKUKU-Vibe-Monitor-windows")
 $ErrorActionPreference = "Stop"
 
 Set-Location (Join-Path $PSScriptRoot "..")  # BleControl\monitor_app
@@ -8,7 +10,7 @@ python -m pip install -r requirements.txt pyinstaller
 python -m PyInstaller --clean --noconfirm packaging/vibe_monitor.spec
 
 $src = "dist/MOKUKU Vibe Monitor"
-$zip = "dist/MOKUKU-Vibe-Monitor-windows.zip"
+$zip = "dist/$Name.zip"
 if (Test-Path $zip) { Remove-Item $zip }
 Compress-Archive -Path $src -DestinationPath $zip
 Write-Host "built: $zip"

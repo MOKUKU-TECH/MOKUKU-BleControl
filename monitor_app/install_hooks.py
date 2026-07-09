@@ -29,15 +29,21 @@ def _join(*parts):
     return " ".join(f'"{p}"' if " " in p else p for p in parts)
 
 
-def report_command(python: str) -> str:
-    """The hook command Claude Code should run. In a PyInstaller bundle the
-    bundled executable itself dispatches on `--hook-report` (see main.py), so
-    the command is the exe with no interpreter or script path - there is no
-    Python for the end user to have installed. From source it's the given
-    interpreter running report_status.py, unchanged."""
+def hook_command(python: str, *extra) -> str:
+    """The command that runs report_status for one hook event. In a
+    PyInstaller bundle the bundled executable itself dispatches on
+    `--hook-report` (see main.py), so it's the exe with no interpreter or
+    script path - the end user needs no Python. From source it's the given
+    interpreter running report_status.py. `extra` carries the Codex
+    installer's `--agent codex --event <name>` args (see
+    install_codex_hooks); command parts with spaces are quoted."""
     if getattr(sys, "frozen", False):
-        return _join(sys.executable, "--hook-report")
-    return _join(python, REPORT_SCRIPT)
+        return _join(sys.executable, "--hook-report", *extra)
+    return _join(python, REPORT_SCRIPT, *extra)
+
+
+def report_command(python: str) -> str:
+    return hook_command(python)
 
 # event -> matcher (None if the event doesn't take one)
 HOOK_EVENTS = {

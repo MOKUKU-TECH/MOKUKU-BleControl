@@ -114,7 +114,11 @@ that repo checked out.
 
 1. Download the zip for your OS from the repo's **Releases** (or the
    **Build Vibe Monitor** GitHub Actions run's artifacts):
-   `MOKUKU-Vibe-Monitor-windows.zip` or `MOKUKU-Vibe-Monitor-linux.zip`.
+   `MOKUKU-Vibe-Monitor-windows.zip`, or for Linux
+   `MOKUKU-Vibe-Monitor-linux-ubuntu22.04.zip` (runs on glibc 2.35+, i.e.
+   Ubuntu 22.04 and older systems) or `-ubuntu24.04.zip` (Ubuntu 24.04 /
+   glibc 2.39+). If the 24.04 build reports `GLIBC_... not found`, use the
+   22.04 one.
 2. Extract it anywhere and double-click **MOKUKU Vibe Monitor** inside the
    extracted folder. No Python, conda, or `pip install` required.
 3. Click **Scan**, pick your device, click **Connect**.

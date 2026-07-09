@@ -24,9 +24,7 @@ import json
 import sys
 from pathlib import Path
 
-from install_hooks import find_our_entry, write_settings as write_hooks, _join
-
-REPORT_SCRIPT = str((Path(__file__).resolve().parent / "vibe_monitor" / "report_status.py"))
+from install_hooks import find_our_entry, write_settings as write_hooks, hook_command
 
 # Codex CLI's own hook event set (codex-rs/hooks) - see report_status.py's
 # CODEX_STATUS_BY_EVENT for what each one maps to. Unlike Claude Code's
@@ -41,9 +39,7 @@ HOOK_EVENTS = (
 
 
 def command_for_event(python: str, event: str) -> str:
-    if getattr(sys, "frozen", False):
-        return _join(sys.executable, "--hook-report", "--agent", "codex", "--event", event)
-    return _join(python, REPORT_SCRIPT, "--agent", "codex", "--event", event)
+    return hook_command(python, "--agent", "codex", "--event", event)
 
 
 def hooks_path(project: bool) -> Path:
