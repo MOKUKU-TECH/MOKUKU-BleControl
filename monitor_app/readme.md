@@ -121,7 +121,10 @@ that repo checked out.
    build.
 2. Extract it anywhere and double-click **MOKUKU Vibe Monitor** inside the
    extracted folder. No Python, conda, or `pip install` required.
-3. Click **Scan**, pick your device, click **Connect**.
+3. Pick a transport tab and connect: **Bluetooth** → **Scan** → pick device →
+   **Connect**, or **Serial Port** → **Refresh Ports** → pick the **right eye's**
+   USB port → **Connect** (no BLE pairing needed, and it survives the vibe-mode
+   reboot). Both use the identical message protocol.
 4. Expand **Firmware Update (OTA)** and click **Enable Vibe Coding Monitor
    Mode** (one-time — reboots the device; reconnect after it comes back up).
 5. Click **Install Claude Code Hooks** (and **Install Codex Hooks** if you use
@@ -225,10 +228,13 @@ Searchable in your app menu as "MOKUKU Vibe Monitor" afterward. First
 double-click on a new Desktop icon may prompt "Untrusted Application
 Launcher" in some file managers - click through it once.
 
-Either way, it's a small standalone window (separate from `app.py`): click
-**Scan**, pick your device, click **Connect**. It shows the device connection
-state, the current Claude Code status, a scrolling activity log, and an
-**"Install Claude Code Hooks"** button (step 2 above, if you skipped the
+Either way, it's a small standalone window (separate from `app.py`) with a
+**Bluetooth / Serial Port** tab at the top. Bluetooth: **Scan**, pick your
+device, **Connect**. Serial Port: **Refresh Ports**, pick the **right eye's**
+USB port, **Connect** — the message protocol is identical, and serial skips BLE
+pairing and survives the vibe-mode reboot (only the left eye reboots). It shows
+the connection state, the current Claude Code status, a scrolling activity log,
+and an **"Install Claude Code Hooks"** button (step 2 above, if you skipped the
 CLI). Unlike
 the old headless daemon this replaces, nothing scans or connects
 automatically - you always know whether it's actually connected. It's not
