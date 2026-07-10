@@ -9,6 +9,20 @@ import time
 CHARACTERISTIC_UUID_MAIN = "beb5483e-36e1-4688-b7f5-ea07361b26a8"
 CHARACTERISTIC_UUID_ACK = "d222e154-1a80-4e71-9a63-2aa2c0ce0a8c"
 DEVICE_NAME_PREFIX = "mokuku"
+
+# --- USB serial transport framing (see IDF_SHARED/backend/serial_host.cc) ---
+# Over USB serial there are no BLE packet boundaries and the console log text
+# shares the pipe, so each message is wrapped in a self-synchronizing frame:
+#   [0xAA][0xAA][chan][len_lo][len_hi][payload...][crc16_lo][crc16_hi]
+# The payload is the *unchanged* bytes that would go to a BLE characteristic;
+# chan selects which one. The firmware relays it to the left eye verbatim.
+SERIAL_FRAME_MAGIC = 0xAA
+SERIAL_CHAN_DATA = 0  # -> Transfer Data characteristic (time-sync packet)
+SERIAL_CHAN_ACK = 1   # -> Transfer Message characteristic (status/panel/wifi/...)
+# USB-CDC ignores the line rate, but pyserial still wants a value.
+SERIAL_BAUD = 460800
+# ESP32-S3 native USB-Serial-JTAG identifiers, to pick the port out of a list.
+ESP32S3_USB_VID = 0x303A
 STATUS_TEXT_MAX_BYTES = 63  # firmware's two 32-byte main/detail buffers (31 usable bytes each) + 1 newline separator
 PROJECT_NAME_MAX_BYTES = 31  # firmware VIBECODING_PROJECT_BUFFER_SIZE (32) minus the null terminator
 
@@ -165,6 +179,25 @@ def encode_reboot_message():
     """ACK message id 6 triggers esp_restart() on the device - matches
     messager.push_reboot()."""
     return bytes([6])
+
+
+def crc16_xmodem(data):
+    """CRC-16/XMODEM (poly 0x1021, init 0x0000, no reflection/final-xor) -
+    matches Crc16XmodemUpdate in IDF_SHARED/backend/serial_host.cc."""
+    crc = 0
+    for byte in data:
+        crc ^= byte << 8
+        for _ in range(8):
+            crc = ((crc << 1) ^ 0x1021) & 0xFFFF if (crc & 0x8000) else (crc << 1) & 0xFFFF
+    return crc
+
+
+def encode_serial_frame(chan, payload):
+    """Wrap a BLE-characteristic payload in a serial host frame (see the
+    SERIAL_* constants above). CRC covers chan|len|payload, not the magic.
+    Host->device only; the device sends no frames back in this version."""
+    body = bytes([chan]) + struct.pack("<H", len(payload)) + payload
+    return bytes([SERIAL_FRAME_MAGIC, SERIAL_FRAME_MAGIC]) + body + struct.pack("<H", crc16_xmodem(body))
 
 
 def format_status(info):

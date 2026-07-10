@@ -23,7 +23,6 @@ import sys
 import threading
 from datetime import datetime
 
-from bleak import BleakClient, BleakScanner
 from PyQt5.QtCore import Qt, QObject, pyqtSignal
 from PyQt5.QtWidgets import (
     QApplication,
@@ -36,6 +35,7 @@ from PyQt5.QtWidgets import (
     QListWidgetItem,
     QMessageBox,
     QPushButton,
+    QTabWidget,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -45,12 +45,9 @@ import install_codex_hooks
 import install_hooks
 from common.log import logging
 from vibe_monitor.protocol import (
-    CHARACTERISTIC_UUID_ACK,
-    CHARACTERISTIC_UUID_MAIN,
     COMMAND_DISABLE_BLE_SCAN,
     COMMAND_OTA_LEFT_EYE,
     COMMAND_OTA_RIGHT_EYE,
-    DEVICE_NAME_PREFIX,
     IPC_HOST,
     IPC_PORT,
     MSG_ID_LEFT_PANEL_ARRAY,
@@ -69,73 +66,11 @@ from vibe_monitor.protocol import (
     encode_string_message,
     encode_time_sync_message,
 )
+from vibe_monitor.transport import BleTransport, SerialTransport
 
 REFRESH_INTERVAL_SECONDS = 2
 SCAN_TIMEOUT_SECONDS = 4.0
 DEFAULT_OTA_URL = "https://prod-cn-hk-alicloud-mokuku-deepmirror-s3.oss-cn-hongkong.aliyuncs.com/DEBUG/vc"
-
-
-IS_LINUX = sys.platform.startswith("linux")
-
-
-async def _bluetoothctl_connect(address, timeout=15.0):
-    """bleak's own BlueZ D-Bus connect() has a known-flaky interaction on
-    Linux (github.com/hbldh/bleak#1364 and others: connects then silently
-    drops, times out client-side while the connection actually succeeds
-    moments later at the BlueZ level, or the whole D-Bus call just hangs
-    without honoring asyncio's timeout/cancellation) - `bluetoothctl
-    connect` against the same bluetoothd doesn't have this problem, so it
-    does the actual radio connection; bleak is only used afterwards for
-    GATT reads/writes on the now-established link. This is a Linux-only
-    workaround; on Windows/macOS bleak's native backend is used directly, so
-    this returns True (nothing to pre-connect) and the caller proceeds to
-    bleak."""
-    if not IS_LINUX:
-        return True
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            "bluetoothctl", "connect", address,
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
-        )
-        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-        return proc.returncode == 0 and b"Connection successful" in stdout
-    except (asyncio.TimeoutError, OSError):
-        return False
-
-
-async def _bluetoothctl_disconnect(address, timeout=10.0):
-    """Symmetric with _bluetoothctl_connect: bleak's own disconnect() can be
-    just as flaky on Linux/BlueZ as its connect() - if it silently fails or
-    times out, our client-side "disconnected" state doesn't match reality,
-    the radio link stays up, and MOKUKU (still thinking something's
-    connected) never resumes BLE advertising - making it invisible to any
-    later scan even though the app itself looks disconnected. Running
-    `bluetoothctl disconnect` afterwards forces the actual radio-level
-    teardown regardless of whether bleak's own call succeeded. No-op on
-    non-Linux (bleak's native backend handles teardown there)."""
-    if not IS_LINUX:
-        return
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            "bluetoothctl", "disconnect", address,
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
-        )
-        await asyncio.wait_for(proc.communicate(), timeout=timeout)
-    except (asyncio.TimeoutError, OSError):
-        pass
-
-
-async def discover_mokuku_devices(timeout=SCAN_TIMEOUT_SECONDS):
-    """Returns [(address, name, rssi), ...] for every discovered mokuku* device."""
-    # async with (rather than manual start()/stop()) guarantees stop() runs
-    # even if something above raises or the sleep is cancelled - otherwise an
-    # unstopped discovery session can leave the adapter stuck "discovering"
-    # and silently break every scan after it, with nothing visibly wrong.
-    async with BleakScanner() as scanner:
-        await asyncio.sleep(timeout)
-        devices = list(scanner.discovered_devices)
-    return [(d.address, d.name, d.rssi) for d in devices
-            if d.name and d.name.startswith(DEVICE_NAME_PREFIX)]
 
 
 class Backend(QObject):
@@ -154,10 +89,18 @@ class Backend(QObject):
         super().__init__()
         self.tracker = SessionTracker()
         self.loop = None
-        self.client = None
-        self.connected_address = None
+        self.transport = BleTransport()
+        self.transport.on_disconnect = self._on_transport_disconnect
+        self.connected_target = None
         self._last_sent = None
         self._last_claude_status = None
+
+    def _on_transport_disconnect(self):
+        # Fired by the transport (bleak's disconnected_callback, or a serial
+        # write that hit an unplugged port). Qt signals are thread-safe.
+        self.connected_target = None
+        self._log("Disconnected")
+        self.connection_changed.emit("disconnected", "")
 
     def start(self):
         threading.Thread(target=self._run_loop, daemon=True).start()
@@ -179,11 +122,14 @@ class Backend(QObject):
     def scan(self):
         asyncio.run_coroutine_threadsafe(self._scan(), self.loop)
 
-    def connect_to(self, address):
-        asyncio.run_coroutine_threadsafe(self._connect(address), self.loop)
+    def connect_to(self, target):
+        asyncio.run_coroutine_threadsafe(self._connect(target), self.loop)
 
     def disconnect(self):
         asyncio.run_coroutine_threadsafe(self._disconnect(), self.loop)
+
+    def set_transport(self, kind):
+        asyncio.run_coroutine_threadsafe(self._set_transport(kind), self.loop)
 
     def select_session(self, session_id):
         """session_id=None reverts to automatic (most recently active)."""
@@ -203,73 +149,53 @@ class Backend(QObject):
 
     # --- async implementation (runs on the background loop) ---
 
+    async def _set_transport(self, kind):
+        if self.transport.name == kind:
+            return
+        await self.transport.disconnect()
+        self.transport = SerialTransport() if kind == "serial" else BleTransport()
+        self.transport.on_disconnect = self._on_transport_disconnect
+        self.connected_target = None
+        self._log(f"Transport: {kind}")
+        self.devices_found.emit([])  # clear the other transport's stale list
+        self.connection_changed.emit("disconnected", "")
+
     async def _scan(self):
         self.connection_changed.emit("scanning", "")
-        self._log("Scanning for MOKUKU devices...")
+        self._log(self.transport.scan_label)
         try:
-            devices = await asyncio.wait_for(discover_mokuku_devices(), timeout=SCAN_TIMEOUT_SECONDS + 10.0)
+            targets = await asyncio.wait_for(self.transport.list_targets(), timeout=SCAN_TIMEOUT_SECONDS + 10.0)
         except Exception as exc:
-            # Without this, a scan that raises (or hangs past its own
-            # internal timeout) left the button stuck on "Scanning..."
-            # forever with zero feedback - indistinguishable from "can't
-            # find the device" even though nothing was actually wrong with
-            # the device.
+            # Without this, a scan that raises (or hangs past its own internal
+            # timeout) leaves the button stuck on "Scanning..." forever with no
+            # feedback - indistinguishable from "device not found".
             self._log(f"Scan failed: {exc}")
-            devices = []
-        self._log(f"Found {len(devices)} device(s)" if devices else "No MOKUKU devices found")
-        self.devices_found.emit(devices)
-        if not self.client or not self.client.is_connected:
+            targets = []
+        self._log(f"Found {len(targets)} target(s)" if targets else "No targets found")
+        self.devices_found.emit(targets)
+        if not self.transport.is_connected:
             self.connection_changed.emit("disconnected", "")
 
-    async def _connect(self, address):
-        self.connection_changed.emit("connecting", address)
-        self._log(f"Connecting to {address}...")
-        if not await _bluetoothctl_connect(address):
-            self._log(f"Failed to connect to {address}")
+    async def _connect(self, target):
+        self.connection_changed.emit("connecting", str(target))
+        self._log(f"Connecting to {target}...")
+        try:
+            ok = await self.transport.connect(target)
+        except Exception as exc:
+            self._log(f"Failed to connect to {target}: {exc}")
+            ok = False
+        if not ok:
+            self._log(f"Failed to connect to {target}")
             self.connection_changed.emit("disconnected", "")
             return
-
-        def on_disconnect(_client):
-            self.client = None
-            self._log(f"Disconnected from {address}")
-            self.connection_changed.emit("disconnected", "")
-
-        client = BleakClient(address, disconnected_callback=on_disconnect)
-        try:
-            await asyncio.wait_for(client.connect(timeout=20), timeout=25.0)
-        except Exception:
-            # bleak's client-side connect() can time out while BlueZ's
-            # underlying connection actually completed moments later -
-            # don't discard it just because our wait gave up first.
-            if not client.is_connected:
-                self._log(f"Failed to connect to {address}")
-                self.connection_changed.emit("disconnected", "")
-                return
-
-        self.client = client
-        self.connected_address = address
+        self.connected_target = target
         self._last_sent = None
-        self._log(f"Connected to {address}")
-        self.connection_changed.emit("connected", address)
+        self._log(f"Connected to {target}")
+        self.connection_changed.emit("connected", str(target))
 
     async def _disconnect(self):
-        address = self.connected_address
-        if self.client:
-            try:
-                await asyncio.wait_for(self.client.disconnect(), timeout=5.0)
-            except Exception:
-                pass
-        self.client = None
-        if address:
-            # Belt and suspenders: force the radio-level disconnect via
-            # bluetoothctl too, regardless of whether bleak's own
-            # disconnect() above actually succeeded - see
-            # _bluetoothctl_disconnect's docstring for why this matters
-            # (otherwise the device can stay connected at the BlueZ level
-            # and simply stop being scannable, with the app none the wiser).
-            await _bluetoothctl_disconnect(address)
-        self._log("Disconnected")
-        self.connection_changed.emit("disconnected", "")
+        await self.transport.disconnect()
+        self._on_transport_disconnect()
 
     async def _select_session(self, session_id):
         self.tracker.select_session(session_id)
@@ -287,13 +213,10 @@ class Backend(QObject):
         self._emit_current_status()
 
     def _require_connected(self, action):
-        if not self.client or not self.client.is_connected:
+        if not self.transport.is_connected:
             self._log(f"{action}: connect to MOKUKU first")
             return False
         return True
-
-    async def _write_ack(self, message, timeout=10.0):
-        await asyncio.wait_for(self.client.write_gatt_char(CHARACTERISTIC_UUID_ACK, message), timeout=timeout)
 
     async def _enable_vibe_mode(self):
         """One-time device setup: set the left/right panel layout for vibe
@@ -312,7 +235,7 @@ class Backend(QObject):
         )
         try:
             for msg in messages:
-                await self._write_ack(msg)
+                await self.transport.write_ack(msg)
         except Exception as exc:
             self._log(f"Enable Vibe Mode: device rebooting (or write failed): {exc}")
             return
@@ -322,8 +245,8 @@ class Backend(QObject):
         if not self._require_connected("Set WiFi"):
             return
         try:
-            await self._write_ack(encode_string_message(MSG_ID_WIFI_NAME, name))
-            await self._write_ack(encode_string_message(MSG_ID_WIFI_PASSWORD, password))
+            await self.transport.write_ack(encode_string_message(MSG_ID_WIFI_NAME, name))
+            await self.transport.write_ack(encode_string_message(MSG_ID_WIFI_PASSWORD, password))
         except Exception as exc:
             self._log(f"Set WiFi failed: {exc}")
             return
@@ -333,7 +256,7 @@ class Backend(QObject):
         if not self._require_connected("Set OTA URL"):
             return
         try:
-            await self._write_ack(encode_string_message(MSG_ID_OTA_HTTP_URL, url))
+            await self.transport.write_ack(encode_string_message(MSG_ID_OTA_HTTP_URL, url))
         except Exception as exc:
             self._log(f"Set OTA URL failed: {exc}")
             return
@@ -348,10 +271,10 @@ class Backend(QObject):
         if not self._require_connected("OTA"):
             return
         try:
-            await self._write_ack(encode_command_message(COMMAND_OTA_RIGHT_EYE))
+            await self.transport.write_ack(encode_command_message(COMMAND_OTA_RIGHT_EYE))
             self._log("OTA: triggered right eye; waiting before left eye...")
             await asyncio.sleep(OTA_EYE_ORDER_DELAY_SECONDS)
-            await self._write_ack(encode_command_message(COMMAND_OTA_LEFT_EYE))
+            await self.transport.write_ack(encode_command_message(COMMAND_OTA_LEFT_EYE))
         except Exception as exc:
             self._log(f"OTA: right eye triggered; left-eye write error (device may be updating): {exc}")
             return
@@ -380,8 +303,8 @@ class Backend(QObject):
                         for sid, s in self.tracker.sessions.items()
                     ],
                     "devices": (
-                        [{"address": self.connected_address, "connected": True}]
-                        if self.client and self.client.is_connected else []
+                        [{"address": str(self.connected_target), "connected": True}]
+                        if self.transport.is_connected else []
                     ),
                     "current_state": state,
                     "current_project": project,
@@ -442,23 +365,19 @@ class Backend(QObject):
                 self._emit_sessions_changed()
                 self._emit_current_status()  # a pruned session may have been the effective one
 
-            if not self.client or not self.client.is_connected:
+            if not self.transport.is_connected:
                 continue
 
             try:
-                await asyncio.wait_for(
-                    self.client.write_gatt_char(CHARACTERISTIC_UUID_MAIN, encode_time_sync_message()), timeout=10.0)
+                await self.transport.write_main(encode_time_sync_message())
             except Exception:
-                continue  # disconnected_callback (if it fires) handles the UI update
+                continue  # transport.on_disconnect (if it fires) handles the UI update
 
             state, project, text = self.tracker.current_status()
             if self._last_sent == (state, project, text):
                 continue
             try:
-                await asyncio.wait_for(
-                    self.client.write_gatt_char(CHARACTERISTIC_UUID_ACK,
-                                                encode_status_message(state, project, text)),
-                    timeout=10.0)
+                await self.transport.write_ack(encode_status_message(state, project, text))
                 self._last_sent = (state, project, text)
             except Exception:
                 pass
@@ -468,7 +387,7 @@ class MainWindow(QWidget):
     def __init__(self):
         super().__init__()
         self.devices = []
-        self.last_connected_address = None
+        self.last_connected_target = None
         self.backend = Backend()
         self._init_ui()
         self.backend.devices_found.connect(self._on_devices_found)
@@ -490,13 +409,9 @@ class MainWindow(QWidget):
         self.connection_status_label = QLabel("Disconnected")
         layout.addWidget(self.connection_status_label)
 
-        self.scan_button = QPushButton("Scan", self)
-        self.scan_button.clicked.connect(self.backend.scan)
-        layout.addWidget(self.scan_button)
-
-        self.device_list = QListWidget(self)
-        self.device_list.setFixedHeight(120)
-        layout.addWidget(self.device_list)
+        # Bluetooth vs Serial Port: each tab lists its own targets; the shared
+        # connect/disconnect row below acts on whichever tab is active.
+        layout.addWidget(self._build_transport_tabs())
 
         button_row = QHBoxLayout()
         self.connect_button = QPushButton("Connect", self)
@@ -587,6 +502,42 @@ class MainWindow(QWidget):
         line.setFrameShadow(QFrame.Sunken)
         return line
 
+    def _build_transport_tabs(self):
+        self.tabs = QTabWidget()
+
+        ble_tab = QWidget()
+        ble_layout = QVBoxLayout()
+        self.ble_scan_button = QPushButton("Scan", self)
+        self.ble_scan_button.clicked.connect(self.backend.scan)
+        ble_layout.addWidget(self.ble_scan_button)
+        self.ble_list = QListWidget(self)
+        self.ble_list.setFixedHeight(120)
+        ble_layout.addWidget(self.ble_list)
+        ble_tab.setLayout(ble_layout)
+        self.tabs.addTab(ble_tab, "Bluetooth")
+
+        serial_tab = QWidget()
+        serial_layout = QVBoxLayout()
+        self.serial_refresh_button = QPushButton("Refresh Ports", self)
+        self.serial_refresh_button.clicked.connect(self.backend.scan)
+        serial_layout.addWidget(self.serial_refresh_button)
+        serial_layout.addWidget(QLabel("Connect to the RIGHT eye's USB port"))
+        self.serial_list = QListWidget(self)
+        self.serial_list.setFixedHeight(100)
+        serial_layout.addWidget(self.serial_list)
+        serial_tab.setLayout(serial_layout)
+        self.tabs.addTab(serial_tab, "Serial Port")
+
+        self.tabs.currentChanged.connect(self._on_tab_changed)
+        return self.tabs
+
+    def _current_list(self):
+        return self.serial_list if self.tabs.currentIndex() == 1 else self.ble_list
+
+    def _on_tab_changed(self, index):
+        self.backend.set_transport("serial" if index == 1 else "ble")
+        self.backend.scan()  # auto-list targets for the newly-selected transport
+
     def _build_ota_group(self):
         """The collapsible OTA panel: WiFi credentials, firmware URL, and the
         Start-OTA trigger. Hidden until the toggle button is checked."""
@@ -637,42 +588,45 @@ class MainWindow(QWidget):
         return self.ota_group
 
     def _on_devices_found(self, devices):
+        # devices: [(target_id, label, extra), ...] from the active transport.
         self.devices = devices
-        self.device_list.clear()
-        for address, name, rssi in devices:
-            item = QListWidgetItem(f"{name}   {address}   RSSI {rssi}")
-            item.setData(Qt.UserRole, address)
-            self.device_list.addItem(item)
+        lst = self._current_list()
+        lst.clear()
+        for target_id, label, _extra in devices:
+            item = QListWidgetItem(label)
+            item.setData(Qt.UserRole, target_id)
+            lst.addItem(item)
         self.connect_button.setEnabled(bool(devices))
 
     def _on_connect_clicked(self):
-        item = self.device_list.currentItem()
+        item = self._current_list().currentItem()
         if not item:
             QMessageBox.warning(self, "WARNING", "Select a device from the list first.")
             return
         self.backend.connect_to(item.data(Qt.UserRole))
 
     def _on_reconnect_clicked(self):
-        if self.last_connected_address:
-            self.backend.connect_to(self.last_connected_address)
+        if self.last_connected_target:
+            self.backend.connect_to(self.last_connected_target)
 
-    def _on_connection_changed(self, state, address):
+    def _on_connection_changed(self, state, target):
         labels = {
             "disconnected": "Disconnected",
             "scanning": "Scanning...",
-            "connecting": f"Connecting to {address}...",
-            "connected": f"Connected to {address}",
+            "connecting": f"Connecting to {target}...",
+            "connected": f"Connected to {target}",
         }
         self.connection_status_label.setText(labels.get(state, state))
         if state == "connected":
-            self.last_connected_address = address
+            self.last_connected_target = target
 
         is_connected = state == "connected"
         is_busy = state in ("scanning", "connecting")
-        self.scan_button.setEnabled(not is_busy)
+        self.ble_scan_button.setEnabled(not is_busy)
+        self.serial_refresh_button.setEnabled(not is_busy)
         self.connect_button.setEnabled(not is_connected and not is_busy and bool(self.devices))
         self.disconnect_button.setEnabled(is_connected)
-        self.reconnect_button.setEnabled(not is_connected and not is_busy and self.last_connected_address is not None)
+        self.reconnect_button.setEnabled(not is_connected and not is_busy and self.last_connected_target is not None)
         for button in (self.enable_vibe_mode_button, self.set_wifi_button,
                        self.set_ota_url_button, self.start_ota_button):
             button.setEnabled(is_connected)

@@ -157,10 +157,25 @@ def map_event(event, agent, event_name):
     return status, tool, detail
 
 
+def _read_stdin():
+    """Claude Code/Codex always write the hook payload as UTF-8, but text-mode
+    stdin decodes piped input with the OS locale encoding - on Windows that's
+    the legacy ANSI codepage, not UTF-8 (the PEP 528 UTF-8 guarantee only
+    covers a real console, not a redirected pipe), so any non-ASCII byte in
+    the payload raised UnicodeDecodeError and crashed the hook. Read raw
+    bytes and decode explicitly instead."""
+    if not sys.stdin:  # windowed exe may have no stdin attached
+        return ""
+    try:
+        return sys.stdin.buffer.read().decode("utf-8", errors="replace")
+    except (AttributeError, OSError, ValueError):
+        return ""
+
+
 def main(argv=None):
     agent, event_override = parse_cli_args(sys.argv[1:] if argv is None else argv)
 
-    raw = sys.stdin.read() if sys.stdin else ""  # windowed exe may have no stdin attached
+    raw = _read_stdin()
     try:
         event = json.loads(raw) if raw.strip() else {}
     except json.JSONDecodeError:
