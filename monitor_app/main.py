@@ -17,11 +17,37 @@ the end user never needs a Python interpreter of their own.
 import sys
 
 
+def _hook_log_path():
+    import os
+    from pathlib import Path
+
+    root = os.environ.get("LOCALAPPDATA") or os.environ.get("TEMP") or "."
+    path = Path(root) / "MOKUKU Vibe Monitor" / "hook.log"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _log_hook_exception():
+    import traceback
+
+    try:
+        with _hook_log_path().open("a", encoding="utf-8") as f:
+            f.write("\n=== hook-report crash ===\n")
+            f.write("argv: " + repr(sys.argv) + "\n")
+            traceback.print_exc(file=f)
+    except Exception:
+        pass
+
+
 def main():
     argv = sys.argv[1:]
     if argv and argv[0] == "--hook-report":
-        from vibe_monitor import report_status
-        return report_status.main(argv[1:])
+        try:
+            from vibe_monitor import report_status
+            return report_status.main(argv[1:])
+        except Exception:
+            _log_hook_exception()
+            return 0
     from vibe_monitor_app import run_gui
     return run_gui()
 
