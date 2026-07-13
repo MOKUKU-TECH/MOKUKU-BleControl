@@ -29,16 +29,28 @@ def _join(*parts):
     return " ".join(f'"{p}"' if " " in p else p for p in parts)
 
 
+def _frozen_hook_exe() -> str:
+    """Sibling console (`mokuku-vibe-hook`) exe next to the GUI executable.
+    Both are built from main.py (see packaging/vibe_monitor.spec) and share
+    the bundle's _internal; the hook one is a console binary so its stdin -
+    the JSON payload Claude Code pipes in - actually works. The GUI exe
+    (sys.executable here) is a Windows GUI-subsystem binary, which has no
+    stdin, so pointing the hook at it made every hook event a silent no-op."""
+    exe = Path(sys.executable)
+    name = "mokuku-vibe-hook" + (".exe" if exe.suffix.lower() == ".exe" else "")
+    return str(exe.with_name(name))
+
+
 def hook_command(python: str, *extra) -> str:
     """The command that runs report_status for one hook event. In a
-    PyInstaller bundle the bundled executable itself dispatches on
-    `--hook-report` (see main.py), so it's the exe with no interpreter or
-    script path - the end user needs no Python. From source it's the given
-    interpreter running report_status.py. `extra` carries the Codex
-    installer's `--agent codex --event <name>` args (see
-    install_codex_hooks); command parts with spaces are quoted."""
+    PyInstaller bundle it's the bundled console hook exe dispatching on
+    `--hook-report` (see main.py) - no interpreter or script path, so the end
+    user needs no Python. From source it's the given interpreter running
+    report_status.py. `extra` carries the Codex installer's `--agent codex
+    --event <name>` args (see install_codex_hooks); command parts with spaces
+    are quoted."""
     if getattr(sys, "frozen", False):
-        return _join(sys.executable, "--hook-report", *extra)
+        return _join(_frozen_hook_exe(), "--hook-report", *extra)
     return _join(python, REPORT_SCRIPT, *extra)
 
 
