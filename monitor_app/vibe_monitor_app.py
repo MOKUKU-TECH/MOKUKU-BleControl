@@ -24,6 +24,7 @@ import threading
 from datetime import datetime
 
 from PyQt5.QtCore import Qt, QObject, pyqtSignal
+from PyQt5.QtGui import QColor
 from PyQt5.QtWidgets import (
     QApplication,
     QFrame,
@@ -43,6 +44,7 @@ from PyQt5.QtWidgets import (
 
 import install_codex_hooks
 import install_hooks
+import theme
 from common.log import logging
 from vibe_monitor.protocol import (
     COMMAND_DISABLE_BLE_SCAN,
@@ -399,14 +401,15 @@ class MainWindow(QWidget):
 
     def _init_ui(self):
         self.setWindowTitle("MOKUKU Vibe Coding Monitor")
-        self.setGeometry(300, 300, 480, 640)
+        self.setGeometry(300, 300, 500, 680)
         layout = QVBoxLayout()
+        layout.setContentsMargins(18, 18, 18, 12)
+        layout.setSpacing(8)
 
-        device_label = QLabel("MOKUKU Device")
-        device_label.setStyleSheet("font-weight: bold;")
-        layout.addWidget(device_label)
+        layout.addWidget(theme.section_label("MOKUKU Device"))
 
-        self.connection_status_label = QLabel("Disconnected")
+        self.connection_status_label = QLabel()
+        self._set_connection_status("disconnected", "Disconnected")
         layout.addWidget(self.connection_status_label)
 
         # Bluetooth vs Serial Port: each tab lists its own targets; the shared
@@ -415,6 +418,7 @@ class MainWindow(QWidget):
 
         button_row = QHBoxLayout()
         self.connect_button = QPushButton("Connect", self)
+        self.connect_button.setProperty("accent", True)
         self.connect_button.clicked.connect(self._on_connect_clicked)
         self.connect_button.setEnabled(False)
         button_row.addWidget(self.connect_button)
@@ -432,19 +436,21 @@ class MainWindow(QWidget):
 
         layout.addWidget(self._hline())
 
-        claude_label = QLabel("Claude Code Status")
-        claude_label.setStyleSheet("font-weight: bold;")
+        claude_label = theme.section_label("Claude Code Status")
         layout.addWidget(claude_label)
 
-        self.claude_status_label = QLabel("Idle")
-        self.claude_status_label.setStyleSheet("font-size: 20px;")
+        self.claude_state_label = QLabel()
+        self.claude_detail_label = QLabel()
+        self.claude_detail_label.setFont(theme.monospace_font())
+        self.claude_detail_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY};")
         # Wrap long detail lines (e.g. a long shell command / file path) onto
         # multiple rows instead of forcing the window wider to fit one line.
-        self.claude_status_label.setWordWrap(True)
-        layout.addWidget(self.claude_status_label)
+        self.claude_detail_label.setWordWrap(True)
+        self._set_claude_status("idle", "", "Idle")
+        layout.addWidget(self.claude_state_label)
+        layout.addWidget(self.claude_detail_label)
 
-        sessions_label = QLabel("Claude Code Sessions (click to choose which one to send)")
-        layout.addWidget(sessions_label)
+        layout.addWidget(theme.hint_label("Sessions - click to choose which one to send"))
 
         self.session_list = QListWidget(self)
         self.session_list.setFixedHeight(100)
@@ -453,9 +459,7 @@ class MainWindow(QWidget):
 
         layout.addWidget(self._hline())
 
-        setup_label = QLabel("Setup")
-        setup_label.setStyleSheet("font-weight: bold;")
-        layout.addWidget(setup_label)
+        layout.addWidget(theme.section_label("Setup"))
 
         self.install_hooks_button = QPushButton("Install Claude Code Hooks", self)
         self.install_hooks_button.clicked.connect(self._on_install_hooks_clicked)
@@ -481,16 +485,16 @@ class MainWindow(QWidget):
 
         layout.addWidget(self._hline())
 
-        log_label = QLabel("Activity Log")
-        log_label.setStyleSheet("font-weight: bold;")
-        layout.addWidget(log_label)
+        layout.addWidget(theme.section_label("Activity Log"))
 
         self.log_view = QTextEdit(self)
         self.log_view.setReadOnly(True)
+        self.log_view.setFont(theme.monospace_font(9))
         layout.addWidget(self.log_view)
 
-        socket_label = QLabel(f"Listening on {IPC_HOST}:{IPC_PORT}")
-        socket_label.setStyleSheet("color: gray; font-size: 10px;")
+        socket_label = QLabel(f"LISTENING ON {IPC_HOST}:{IPC_PORT}")
+        socket_label.setFont(theme.monospace_font(8))
+        socket_label.setStyleSheet(f"color: {theme.TEXT_FAINT};")
         layout.addWidget(socket_label)
 
         self.setLayout(layout)
@@ -499,8 +503,23 @@ class MainWindow(QWidget):
     def _hline():
         line = QFrame()
         line.setFrameShape(QFrame.HLine)
-        line.setFrameShadow(QFrame.Sunken)
+        line.setFixedHeight(1)
+        line.setStyleSheet(f"background: {theme.BORDER}; border: none;")
         return line
+
+    def _set_connection_status(self, state, text):
+        color = theme.CONNECTION_COLORS.get(state, theme.TEXT_FAINT)
+        self.connection_status_label.setText(f"● {text}")
+        self.connection_status_label.setStyleSheet(f"color: {color}; font-size: 14px;")
+
+    def _set_claude_status(self, state_name, project, text):
+        color = theme.CLAUDE_STATE_COLORS.get(state_name, theme.TEXT_SECONDARY)
+        prefix = f"{project}  " if project else ""
+        self.claude_state_label.setText(f"{prefix}{state_name.upper()}")
+        self.claude_state_label.setStyleSheet(
+            f"color: {color}; font-size: 20px; font-weight: 600;")
+        detail = text.replace(chr(10), " - ")
+        self.claude_detail_label.setText("" if detail.lower() == state_name.lower() else detail)
 
     def _build_transport_tabs(self):
         self.tabs = QTabWidget()
@@ -514,19 +533,19 @@ class MainWindow(QWidget):
         self.ble_list.setFixedHeight(120)
         ble_layout.addWidget(self.ble_list)
         ble_tab.setLayout(ble_layout)
-        self.tabs.addTab(ble_tab, "Bluetooth")
+        self.tabs.addTab(ble_tab, "BLUETOOTH")
 
         serial_tab = QWidget()
         serial_layout = QVBoxLayout()
         self.serial_refresh_button = QPushButton("Refresh Ports", self)
         self.serial_refresh_button.clicked.connect(self.backend.scan)
         serial_layout.addWidget(self.serial_refresh_button)
-        serial_layout.addWidget(QLabel("Connect to the RIGHT eye's USB port"))
+        serial_layout.addWidget(theme.hint_label("Connect to the RIGHT eye's USB port"))
         self.serial_list = QListWidget(self)
         self.serial_list.setFixedHeight(100)
         serial_layout.addWidget(self.serial_list)
         serial_tab.setLayout(serial_layout)
-        self.tabs.addTab(serial_tab, "Serial Port")
+        self.tabs.addTab(serial_tab, "SERIAL PORT")
 
         self.tabs.currentChanged.connect(self._on_tab_changed)
         return self.tabs
@@ -616,7 +635,7 @@ class MainWindow(QWidget):
             "connecting": f"Connecting to {target}...",
             "connected": f"Connected to {target}",
         }
-        self.connection_status_label.setText(labels.get(state, state))
+        self._set_connection_status(state, labels.get(state, state))
         if state == "connected":
             self.last_connected_target = target
 
@@ -635,8 +654,7 @@ class MainWindow(QWidget):
         self.log_view.append(message)
 
     def _on_claude_status_changed(self, state_name, project, text):
-        prefix = f"[{project}] " if project else ""
-        self.claude_status_label.setText(f"{prefix}{state_name}: {text.replace(chr(10), ' - ')}")
+        self._set_claude_status(state_name, project, text)
 
     def _on_sessions_changed(self, items):
         self.session_list.clear()
@@ -648,6 +666,7 @@ class MainWindow(QWidget):
                 font = item.font()
                 font.setBold(True)
                 item.setFont(font)
+                item.setForeground(QColor(theme.ACCENT))
             self.session_list.addItem(item)
 
     def _on_session_clicked(self, item):
@@ -810,6 +829,7 @@ def run_gui():
         return 1
 
     app = QApplication(sys.argv)
+    app.setStyleSheet(theme.APP_STYLESHEET)
     window = MainWindow()
     window.show()
     return app.exec_()
