@@ -230,7 +230,8 @@ Searchable in your app menu as "MOKUKU Vibe Monitor" afterward. First
 double-click on a new Desktop icon may prompt "Untrusted Application
 Launcher" in some file managers - click through it once.
 
-Either way, it's a small standalone window (separate from `app.py`) with a
+Either way, it's a small standalone dark-themed window (separate from
+`app.py`, styling in `theme.py`) with a
 **Bluetooth / Serial Port** tab at the top. Bluetooth: **Scan**, pick your
 device, **Connect**. Serial Port: **Refresh Ports**, pick the **right eye's**
 USB port, **Connect** — the message protocol is identical, and serial skips BLE
