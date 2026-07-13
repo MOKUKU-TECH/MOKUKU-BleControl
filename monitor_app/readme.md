@@ -155,8 +155,10 @@ fights whatever's trying to hold the host connection — a phone, `app.py`, or
 
 Easiest: click **"Install Claude Code Hooks"** in the app (a one-time step;
 same idempotent merge into the global `~/.claude/settings.json`). The prebuilt
-app wires the hook command to the bundled executable itself — the hook runs
-`<app> --hook-report`, so there's no Python for you to have installed.
+app wires the hook command to a bundled console executable — the hook runs
+`mokuku-vibe-hook --hook-report` (a console binary beside the GUI exe, so it can
+read the JSON payload Claude Code pipes in on stdin), so there's no Python for
+you to have installed.
 
 From source, use the CLI instead:
 

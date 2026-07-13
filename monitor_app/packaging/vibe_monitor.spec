@@ -58,11 +58,26 @@ exe = EXE(
     [],
     exclude_binaries=True,
     name="MOKUKU Vibe Monitor",
-    console=False,  # no console window when double-clicked; hook stdin still pipes in
+    console=False,  # no console window when the GUI is double-clicked
+    disable_windowed_traceback=False,
+)
+# Same main.py, built as a console (CUI) binary. A Windows GUI-subsystem exe
+# has no working stdin, so the hook path (`--hook-report`, fed its JSON payload
+# on stdin) reads nothing and silently does nothing there. Claude Code's hook
+# command points at this console exe (see install_hooks.hook_command); the GUI
+# exe above stays windowed so double-clicking it flashes no console.
+exe_hook = EXE(
+    pyz,
+    a.scripts,
+    [],
+    exclude_binaries=True,
+    name="mokuku-vibe-hook",
+    console=True,
     disable_windowed_traceback=False,
 )
 coll = COLLECT(
     exe,
+    exe_hook,
     a.binaries,
     a.datas,
     name="MOKUKU Vibe Monitor",

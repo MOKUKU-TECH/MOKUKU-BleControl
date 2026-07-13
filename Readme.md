@@ -446,7 +446,9 @@ monitor_app/requirements.txt` (or the conda env in `ble_ctrl_env.yaml`), then
   phone/host connection), then reboots to apply.
 - **Install Claude Code Hooks** merges hook entries into `~/.claude/settings.json`
   (idempotent, backs up the previous file). In the prebuilt bundle the hook
-  command points at the bundled executable itself (`<app> --hook-report`), so
+  command points at a bundled console executable (`mokuku-vibe-hook
+  --hook-report`, next to the GUI exe — a console binary so the hook can read
+  its stdin payload, which the GUI-subsystem exe can't), so
   there's no Python for the end user to have. Each hook event forwards a status
   over a TCP loopback socket (`127.0.0.1:47615`) to the running app — a silent
   no-op if it isn't running.
