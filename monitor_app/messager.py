@@ -9,6 +9,9 @@ from common.log import logging
 from cpu_monitor import get_cpu_usage, start_cpu_monitor
 from gpu_monitor import get_gpu_usage, start_gpu_monitor
 
+# Both monitors run background polling threads (psutil / pynvml), so they stay
+# off until start_monitors() is called - see the "Start CPU/GPU Monitors" button.
+
 
 def get_current_time_ms():
     # Current time in seconds as float
@@ -25,6 +28,8 @@ class MokukuMessager:
         # self.command_lock = threading.Lock()
         # self.command_queue = deque()
         self.tag = "[messager]"
+
+    def start_monitors(self):
         start_cpu_monitor()
         start_gpu_monitor()
 
@@ -99,6 +104,25 @@ class MokukuMessager:
         # Note: this is NOT the same as command byte 6 (push_command(6)),
         # which is a different, unrelated code path.
         self.push_ack_message(list(struct.pack("<B", 6)))
+
+    """
+    Meme enable/disable (idle, meme id 0, can never be disabled - device ignores it):
+    | 1          | 2     | 3 - N              |
+    |------------|-------|--------------------|
+    | 54 (enable) / 55 (disable) | count | meme id (1 byte) x count |
+    """
+
+    def push_meme_toggle(self, meme_ids, disabled):
+        message_id = 55 if disabled else 54
+        byte_data = []
+        byte_data.extend(struct.pack("<B", message_id))
+        byte_data.extend(struct.pack("<B", len(meme_ids)))
+        for meme_id in meme_ids:
+            byte_data.extend(struct.pack("<B", meme_id))
+        self.push_ack_message(byte_data)
+
+    def push_meme_states_request(self):
+        self.push_ack_message([56])
 
     def push_string_message(self, id, message):
         str_bytes = message.encode("utf-8")

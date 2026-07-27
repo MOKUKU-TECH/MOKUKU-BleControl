@@ -25,6 +25,12 @@ conda env create -f monitor_app/ble_ctrl_env.yaml
 python monitor_app/app.py
 ```
 
+## Meme Test Panel
+
+Connect over BLE, then click **Open Meme Test Panel**. It loads the current state
+of each installed meme, groups them by app tag, and provides per-meme and per-tag
+enable toggles. The **不可编辑** tag is read-only.
+
 | [Demo Video](../assets/mokuku_ble_demo_0.mp4)  | [Demo Video Raw](../assets/mokuku_ble_demo_1.mp4)           |
 | ------- | -------------------- |
 | <video src="https://github.com/user-attachments/assets/7ea8c529-6754-4a41-8ce0-084be0e38f3e">    | <video src="https://github.com/user-attachments/assets/c99fa5b1-677f-428a-a3d0-675f6aeb1d7c">  |

@@ -189,6 +189,33 @@ coding-agent status.
 
 `string length = 0` is ignored - this panel has no numeric fallback to revert to.
 
+## Meme Enable/Disable
+
+Controls which meme ids are eligible to display — blocked from both random
+selection and motion-triggered playback. Idle (meme id `0`) can never be
+disabled; it's silently skipped if included in the list.
+
+### Enable Memes
+
+| Byte | Value | Description |
+| ---- | ----- | ----------- |
+| 1 | `54` | |
+| 2 | count | number of meme ids that follow |
+| 3..N | meme id (1 byte each) × count | |
+
+### Disable Memes
+
+| Byte | Value | Description |
+| ---- | ----- | ----------- |
+| 1 | `55` | |
+| 2 | count | number of meme ids that follow |
+| 3..N | meme id (1 byte each) × count | |
+
+### Query Meme States
+
+Send `56` with no payload. The device responds with `56`, `count`, then one byte
+per installed meme ID (`0` = enabled, `1` = disabled).
+
 ## File System Commands
 
 ### List Directory
