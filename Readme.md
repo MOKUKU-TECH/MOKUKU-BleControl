@@ -64,6 +64,8 @@ takes one of:
 | 6     | Reboot             |
 | 10    | Toggle stereo mode |
 | 20    | Keep Idling        |
+| 22    | Start sequential meme-list playback |
+| 23    | Stop sequential meme-list playback |
 | 34    | Enable OBD/canbus BLE scan (left eye) |
 | 35    | Disable OBD/canbus BLE scan, fall back to GPS mode (left eye) |
 | 43    | Left click         |

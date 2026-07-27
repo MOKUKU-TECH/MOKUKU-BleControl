@@ -255,6 +255,22 @@ class SimpleWindow(QWidget):
 
         self.start_monitors_button = QPushButton("Start CPU/GPU Monitors", self)
         self.start_monitors_button.clicked.connect(self.start_monitors)
+        self.enable_obd_ble_scan_button = QPushButton("Enable OBD BLE Scan", self)
+        self.enable_obd_ble_scan_button.clicked.connect(
+            lambda: self.send_device_command(34, "Enabled OBD BLE scan")
+        )
+        self.disable_obd_ble_scan_button = QPushButton("Disable OBD BLE Scan", self)
+        self.disable_obd_ble_scan_button.clicked.connect(
+            lambda: self.send_device_command(35, "Disabled OBD BLE scan")
+        )
+        self.start_meme_list_button = QPushButton("Start Meme List Playback", self)
+        self.start_meme_list_button.clicked.connect(
+            lambda: self.send_device_command(22, "Started meme list playback")
+        )
+        self.stop_meme_list_button = QPushButton("Stop Meme List Playback", self)
+        self.stop_meme_list_button.clicked.connect(
+            lambda: self.send_device_command(23, "Stopped meme list playback")
+        )
 
         # command layout
         self.command_input_box = QLineEdit(self)
@@ -275,6 +291,12 @@ class SimpleWindow(QWidget):
             layout.addWidget(ele)
         layout.addLayout(layout_wifi)
         layout.addWidget(self.start_monitors_button)
+        device_control_layout = QHBoxLayout()
+        device_control_layout.addWidget(self.enable_obd_ble_scan_button)
+        device_control_layout.addWidget(self.disable_obd_ble_scan_button)
+        device_control_layout.addWidget(self.start_meme_list_button)
+        device_control_layout.addWidget(self.stop_meme_list_button)
+        layout.addLayout(device_control_layout)
 
         self.add_horizatal_line(layout)
         cmd_label = theme.section_label("Send Command")
@@ -421,6 +443,10 @@ class SimpleWindow(QWidget):
             return
         command = int(self.command_input_box.text().strip())
         messager.push_command(command)
+
+    def send_device_command(self, command, status):
+        messager.push_command(command)
+        self.message_label.setText(status)
 
     def on_table_item_clicked(self, item):
         column = item.column()
