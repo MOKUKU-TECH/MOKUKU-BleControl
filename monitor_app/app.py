@@ -47,6 +47,7 @@ APP_TAG_NAMES = {
     3: "Mood",
     4: "Play",
     5: "不可编辑",
+    6: "Festival",
 }
 
 
@@ -60,6 +61,8 @@ def create_command_table(widget):
         ["67", "right ota update"],
         ["68", "left meme update"],
         ["69", "right meme update"],
+        ["70", "left rollback"],
+        ["71", "right rollback"],
     ]
     table = create_qt_table(["Command", "detail"], table_data, True)
     table.setStyleSheet(
