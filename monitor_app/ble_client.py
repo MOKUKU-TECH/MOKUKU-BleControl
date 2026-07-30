@@ -13,14 +13,17 @@ from PyQt5.QtWidgets import (
     QVBoxLayout,
     QLabel,
     QLineEdit,
-    QListWidget,
-    QListWidgetItem,
     QHBoxLayout,
     QFrame,
     QMessageBox,
+    QAbstractItemView,
+    QHeaderView,
+    QTableWidget,
+    QTableWidgetItem,
 )
 from PyQt5.QtCore import Qt, Q_ARG
 
+import theme
 from common.qt_loading_dialog import LoadingDialog, DownloadingDialog
 from bleak import BleakClient, BleakScanner, BleakError
 from common.log import logging
@@ -182,6 +185,11 @@ class BleClient:
         self.message_label = None
         self.remote_file = FileTransfer()
         self.local_file = FileTransfer()
+        self.meme_states_callbacks = []
+
+    def request_meme_states(self, callback):
+        self.meme_states_callbacks.append(callback)
+        messager.push_meme_states_request()
 
     def stop_client(self):
         self.client_stop = True
@@ -216,7 +224,7 @@ class BleClient:
 
         self.devices_list = []
         for d in scanner.discovered_devices:
-            if not d.name.startswith(self.target_device):
+            if not d.name or not d.name.startswith(self.target_device):
                 continue
             device = {}
             device["name"] = d.name
@@ -371,6 +379,17 @@ class BleClient:
         elif data[0] == 64:
             # keep sending data
             self.local_file.uploadfile_send_data(data)
+        elif data[0] == 56:
+            state_count = data[1] if len(data) > 1 else 0
+            if len(data) != state_count + 2:
+                logging.error(f"[MEME] invalid state response length: {len(data)}")
+                return
+            meme_states = {meme_id: bool(data[meme_id + 2]) for meme_id in range(state_count)}
+            logging.info(f"[MEME] received states for {state_count} memes")
+            callbacks = self.meme_states_callbacks
+            self.meme_states_callbacks = []
+            for callback in callbacks:
+                callback(meme_states)
         else:
             data_str = bytes.fromhex(data[2:].hex()).decode("utf-8")
             logging.info(
@@ -394,42 +413,34 @@ class BleQtWidget:
         self.ble_client.scan_for_device_threading(self.scan_done_event)
 
     def on_device_clicked(self, item):
-        """Handle device selection (e.g., show more details)"""
-        device = item.data(Qt.UserRole)  # Retrieve stored device data
-        # self.status_label.setText(f"Selected: {device['name']} ({device['address']})")
+        device = self.device_table.item(item.row(), 0).data(Qt.UserRole)
         logging.info(f"Selected: {device['name']} ({device['address']})")
 
-    def populate_device_list(self, devices):
-        """Add scanned devices to the scrollable list"""
-        self.device_list.clear()
-        for device in devices:
-            # Format device info (name, address, signal strength)
-            item_text = (
-                f"Name: {device['name']}\n"
-                f"Address: {device['address']}\n"
-                f"RSSI: {device['rssi']} dBm"  # Signal strength (lower = weaker)
-            )
-            # Create list item
-            item = QListWidgetItem(item_text)
-            item.setData(Qt.UserRole, device)  # Store full device data for later use
-            self.device_list.addItem(item)
-
-        # Optional: Allow selecting items
-        self.device_list.itemClicked.connect(self.on_device_clicked)
+    def populate_device_table(self, devices):
+        self.device_table.setRowCount(len(devices))
+        for row, device in enumerate(devices):
+            name_item = QTableWidgetItem(device["name"])
+            name_item.setData(Qt.UserRole, device)
+            self.device_table.setItem(row, 0, name_item)
+            self.device_table.setItem(row, 1, QTableWidgetItem(device["address"]))
+            self.device_table.setItem(row, 2, QTableWidgetItem(f"{device['rssi']} dBm"))
+        self.device_table.resizeRowsToContents()
 
     def scan_done_event(self):
         logging.info("scan_done_event")
         if self.loading_dialog:
             self.loading_dialog.close()
         self.ble_scan_button.setEnabled(True)  # Re-enable button
-        self.populate_device_list(self.ble_client.devices_list)
+        self.populate_device_table(self.ble_client.devices_list)
 
     def connect_ble(self):
-        current_item = self.device_list.currentItem().data(
-            Qt.UserRole
-        )  # Retrieve stored device data
-        logging.info(f"Connect to: {current_item['name']} ({current_item['address']})")
-        self.ble_client.start_threading_connect_to_device(current_item["address"])
+        current_row = self.device_table.currentRow()
+        if current_row < 0:
+            QMessageBox.warning(self.parent, "WARNING", "Select a BLE device first.")
+            return
+        device = self.device_table.item(current_row, 0).data(Qt.UserRole)
+        logging.info(f"Connect to: {device['name']} ({device['address']})")
+        self.ble_client.start_threading_connect_to_device(device["address"])
 
     def init_wedgets(self, widget, message_label):
         self.parent = widget
@@ -438,9 +449,8 @@ class BleQtWidget:
 
         elements = []
 
-        cmd_label = QLabel("Bluetooth Connect")
+        cmd_label = theme.section_label("Bluetooth Connect")
         cmd_label.setFixedSize(widget.width, widget.line_height)
-        cmd_label.setFont(widget.subtitle_font)
         elements.append(cmd_label)
 
         # ble interface
@@ -448,14 +458,24 @@ class BleQtWidget:
         self.ble_scan_button.clicked.connect(self.start_ble_scan)
         elements.append(self.ble_scan_button)
 
-        # Scrollable list for BLE devices
-        self.device_list = QListWidget(widget)
-        self.device_list.setAlternatingRowColors(True)  # Better readability
-        self.device_list.setToolTip("Click a device to select it")
-        self.device_list.setFixedSize(
+        self.device_table = QTableWidget(0, 3, widget)
+        self.device_table.setHorizontalHeaderLabels(["Name", "Address", "RSSI"])
+        self.device_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.device_table.verticalHeader().setVisible(False)
+        self.device_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.device_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.device_table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.device_table.setToolTip("Select a device to connect")
+        self.device_table.setStyleSheet(
+            "QTableWidget { background-color: #000000; }"
+            "QTableWidget::item { background-color: #000000; }"
+            "QTableWidget::item:selected { background-color: rgba(5, 207, 120, 0.18); }"
+        )
+        self.device_table.itemClicked.connect(self.on_device_clicked)
+        self.device_table.setFixedSize(
             widget.size().width(), int(widget.size().height() * 0.3)
         )
-        elements.append(self.device_list)
+        elements.append(self.device_table)
 
         # connect ble
         self.ble_connect_button = QPushButton("Connect BLE", widget)

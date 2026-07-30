@@ -64,6 +64,8 @@ takes one of:
 | 6     | Reboot             |
 | 10    | Toggle stereo mode |
 | 20    | Keep Idling        |
+| 22    | Start sequential meme-list playback |
+| 23    | Stop sequential meme-list playback |
 | 34    | Enable OBD/canbus BLE scan (left eye) |
 | 35    | Disable OBD/canbus BLE scan, fall back to GPS mode (left eye) |
 | 43    | Left click         |
@@ -72,6 +74,8 @@ takes one of:
 | 67    | Right OTA update   |
 | 68    | Left MEME update   |
 | 69    | Right MEME update  |
+| 70    | Left OTA rollback (revert to the previous app partition and reboot) |
+| 71    | Right OTA rollback |
 | >100  | Set MEME (meme id + 100) |
 
 You can set a meme by sending command (meme id + 100), [the meme list is here](assets/meme_list.txt).
@@ -188,6 +192,33 @@ coding-agent status.
 | 3..N | status text (≤31 bytes) |
 
 `string length = 0` is ignored - this panel has no numeric fallback to revert to.
+
+## Meme Enable/Disable
+
+Controls which meme ids are eligible to display — blocked from both random
+selection and motion-triggered playback. Idle (meme id `0`) can never be
+disabled; it's silently skipped if included in the list.
+
+### Enable Memes
+
+| Byte | Value | Description |
+| ---- | ----- | ----------- |
+| 1 | `54` | |
+| 2 | count | number of meme ids that follow |
+| 3..N | meme id (1 byte each) × count | |
+
+### Disable Memes
+
+| Byte | Value | Description |
+| ---- | ----- | ----------- |
+| 1 | `55` | |
+| 2 | count | number of meme ids that follow |
+| 3..N | meme id (1 byte each) × count | |
+
+### Query Meme States
+
+Send `56` with no payload. The device responds with `56`, `count`, then one byte
+per installed meme ID (`0` = enabled, `1` = disabled).
 
 ## File System Commands
 
