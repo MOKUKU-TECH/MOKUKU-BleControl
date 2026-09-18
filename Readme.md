@@ -262,6 +262,18 @@ Sends a single command byte (see [Command List](#command-list)).
 | ---- |
 | `3`  |
 
+## Query Right-Eye Wakeword Model
+
+Send this on **Transfer Message** to check whether the right eye runs
+`wn10_himokuku`:
+
+| Byte |
+| ---- |
+| `57` |
+
+The device responds on **Transfer Data** as `57, 1, value`: `value = 1` means
+`wn10_himokuku`; `0` means another WakeNet model.
+
 # 3. Download File from MOKUKU
 
 *(txt files only)*

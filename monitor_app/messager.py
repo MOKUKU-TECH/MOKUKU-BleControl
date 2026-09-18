@@ -124,6 +124,9 @@ class MokukuMessager:
     def push_meme_states_request(self):
         self.push_ack_message([56])
 
+    def push_himokuku_wakeword_model_request(self):
+        self.push_ack_message([57])
+
     def push_string_message(self, id, message):
         str_bytes = message.encode("utf-8")
         if len(str_bytes) > 255:
