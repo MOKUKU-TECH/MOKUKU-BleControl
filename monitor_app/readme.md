@@ -47,8 +47,7 @@ all installed memes sequentially or returns to normal meme selection.
 | ------- | -------------------- |
 | 66      | **Left OTA update**  |
 | 67      | **Right OTA update** |
-| 72      | **Right speech-recognition model update** |
-| 73      | **Left speech UI update** |
+| 72      | **Speech update, both eyes** |
 
 ⚠️ **Important Notice**:
 

@@ -76,8 +76,7 @@ takes one of:
 | 69    | Right MEME update  |
 | 70    | Left OTA rollback (revert to the previous app partition and reboot) |
 | 71    | Right OTA rollback |
-| 72    | Right speech-recognition model update |
-| 73    | Left speech UI update |
+| 72    | Speech update, both eyes (model on the right, wake-word UI memes on both) |
 | >100  | Set MEME (meme id + 100) |
 
 You can set a meme by sending command (meme id + 100), [the meme list is here](assets/meme_list.txt).
