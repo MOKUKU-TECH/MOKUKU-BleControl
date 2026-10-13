@@ -76,8 +76,14 @@ takes one of:
 | 69    | Right MEME update  |
 | 70    | Left OTA rollback (revert to the previous app partition and reboot) |
 | 71    | Right OTA rollback |
-| 72    | Speech update, both eyes (model on the right, wake-word UI memes on both) |
+| 72    | English speech update, both eyes (model on the right, wake-word UI memes on both) |
+| 73    | Mandarin speech update, both eyes (model on the right, wake-word UI memes on both) |
 | >100  | Set MEME (meme id + 100) |
+
+Commands `72` (English) and `73` (Mandarin) update the speech model on the right
+eye and wake-word UI memes on both eyes. The left eye relays the command before
+rebooting into the update. Model URLs are `srmodels/mn5q8_en_wn10_himokuku.bin`
+and `srmodels/mn5q8_cn_wn10_himokuku.bin`; shared UI assets are under `srmodels/ui`.
 
 You can set a meme by sending command (meme id + 100), [the meme list is here](assets/meme_list.txt).
 
