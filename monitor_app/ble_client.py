@@ -49,9 +49,16 @@ class FileTransfer:
         self.current_pos = 0
         self.file = None
         self.download_path = None
+        self.remote_path = None
         self.error = None
 
     def set(self, id, size, file_name):
+        if self.file and not self.file.closed:
+            if size != self.file_size:
+                raise ValueError("Remote file size changed during download")
+            self.file_id = id
+            self.file.seek(self.current_pos)
+            return
         self.file_id = id
         self.file_size = size
         self.current_pos = 0
@@ -80,7 +87,7 @@ class FileTransfer:
             return False
         try:
             self.set(ptr_value, file_size, self.download_path)
-        except OSError as error:
+        except (OSError, ValueError) as error:
             self.call_complete(f"Cannot save file: {error}")
             return False
         return True
@@ -303,16 +310,43 @@ class BleClient:
                     print(f"          Handle: {descriptor.handle}")
 
     async def connect_to_device(self):
+        self.client_stop = False
+        reconnect_attempts = 0
+        while not self.client_stop:
+            await self.run_connection()
+            self.connected = False
+            if not self.remote_file.complete_callback or self.client_stop:
+                break
+            if reconnect_attempts == 3:
+                break
+            reconnect_attempts += 1
+            logging.warning(
+                "[FILE] BLE disconnected at %d/%d bytes; reconnecting (%d/3)",
+                self.remote_file.current_pos,
+                self.remote_file.file_size,
+                reconnect_attempts,
+            )
+            self.last_file_request = None
+            messager.discard_file_read_requests()
+            await asyncio.sleep(2)
+            if self.client_stop:
+                break
+            messager.push_string_message(65, self.remote_file.remote_path)
+        if self.remote_file.complete_callback:
+            reason = "Download stopped" if self.client_stop else "BLE reconnect failed after 3 attempts"
+            self.remote_file.call_complete(reason)
+        logging.info("ble client stopped!")
+
+    async def run_connection(self):
         if self.message_label:
             self.message_label.setText(f"Connecting to {self.service_address}...")
         try:
             async with BleakClient(self.service_address) as client:
                 if not client.is_connected:
-                    logging.warning("Failed to connect.")
+                    logging.warning("Failed to connect to %s", self.service_address)
                     return
 
                 logging.info(f"✅ Connected to {self.service_address}!")
-                self.client_stop = False
 
                 if self.message_label:
                     self.message_label.setText(
@@ -384,7 +418,7 @@ class BleClient:
                         await client.write_gatt_char(
                             self.CHARACTERISTIC_UUID_ACK,
                             message_to_send,
-                            response=message_to_send[0] != 66,
+                            response=True,
                         )
                         continue
 
@@ -401,7 +435,7 @@ class BleClient:
                                 await client.write_gatt_char(
                                     self.CHARACTERISTIC_UUID_ACK,
                                     self.last_file_request,
-                                    response=False,
+                                    response=True,
                                 )
                             continue
                     else:
@@ -416,7 +450,12 @@ class BleClient:
                     except asyncio.TimeoutError:
                         pass
 
-                logging.info("Process End!")
+                logging.info(
+                    "BLE session ended: %s at file byte %d/%d",
+                    "app stopped" if self.client_stop else "link disconnected",
+                    self.remote_file.current_pos,
+                    self.remote_file.file_size,
+                )
         except BleakError as e:
             if self.message_label:
                 self.message_label.setText(f"BLE Error: {str(e)}")
@@ -424,9 +463,6 @@ class BleClient:
         finally:
             messager.set_ack_message_wakeup(None)
             self.connected = False
-            if self.remote_file.complete_callback:
-                self.remote_file.call_complete("BLE connection closed before download completed")
-        logging.info("ble client stopped!")
 
     def require_file_data(self):
         # id(=66), buffer_size, file_id, begin

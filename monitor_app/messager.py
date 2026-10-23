@@ -98,6 +98,12 @@ class MokukuMessager:
         if wakeup:
             wakeup()
 
+    def discard_file_read_requests(self):
+        with self.ack_message_lock:
+            self.ack_message_queue = deque(
+                message for message in self.ack_message_queue if message[0] != 66
+            )
+
     """
     1. Wifi Name :
     | 1 | 2 | 3 - N |

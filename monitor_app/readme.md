@@ -73,8 +73,10 @@ Connect over BLE, open **Info Queries**, request the recording files, and click
 **Download** beside the file you want. You can also enter its full path (for
 example, `/sd/record/mobili_2.record`) in the main window and click
 **Download File**. Choose a local save location and keep the app connected until
-the byte counter reaches the file size and the completion message appears. A
-failed transfer leaves a partial file at the selected location.
+the byte counter reaches the file size and the completion message appears. If
+BLE disconnects, the app retries the connection up to three times and resumes
+from the saved byte offset. A failed transfer leaves a partial file at the
+selected location.
 
 Install the matching MobiliMOKUKU firmware before using this download flow; it
 caps file replies to the negotiated BLE MTU.
