@@ -190,6 +190,7 @@ class BleClient:
     def request_meme_states(self, callback):
         self.meme_states_callbacks.append(callback)
         messager.push_meme_states_request()
+        messager.push_himokuku_wakeword_model_request()
 
     def stop_client(self):
         self.client_stop = True
@@ -390,6 +391,14 @@ class BleClient:
             self.meme_states_callbacks = []
             for callback in callbacks:
                 callback(meme_states)
+        elif data[0] == 57:
+            if len(data) != 3 or data[1] != 1:
+                logging.error(f"[SR] invalid wakeword-model response: {list(data)}")
+                return
+            logging.info(
+                "[SR] right-eye wakeword model: %s",
+                "wn10_himokuku" if data[2] else "other",
+            )
         else:
             data_str = bytes.fromhex(data[2:].hex()).decode("utf-8")
             logging.info(

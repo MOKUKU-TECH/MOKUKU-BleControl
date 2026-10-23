@@ -47,6 +47,14 @@ all installed memes sequentially or returns to normal meme selection.
 | ------- | -------------------- |
 | 66      | **Left OTA update**  |
 | 67      | **Right OTA update** |
+| 72      | **English speech update, both eyes** |
+| 73      | **Mandarin speech update, both eyes** |
+
+After connecting, select **English speech update (both eyes)** or
+**Mandarin speech update (both eyes)** in the command table, then click
+**Send Command**. Both choices update wake-word UI assets on both eyes and
+the selected language model on the right eye. Configure WiFi and the OTA
+server first; the devices reboot to run the update.
 
 ⚠️ **Important Notice**:
 

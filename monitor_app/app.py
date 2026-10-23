@@ -63,6 +63,8 @@ def create_command_table(widget):
         ["69", "right meme update"],
         ["70", "left rollback"],
         ["71", "right rollback"],
+        ["72", "English speech update (both eyes)"],
+        ["73", "Mandarin speech update (both eyes)"],
     ]
     table = create_qt_table(["Command", "detail"], table_data, True)
     table.setStyleSheet(
