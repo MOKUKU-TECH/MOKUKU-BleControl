@@ -61,6 +61,8 @@ takes one of:
 
 | Value | Command            |
 | ----- | ------------------ |
+| 1     | Start recording on the left eye |
+| 2     | Stop recording on the left eye |
 | 6     | Reboot             |
 | 10    | Toggle stereo mode |
 | 20    | Keep Idling        |
@@ -79,6 +81,10 @@ takes one of:
 | 72    | English speech update, both eyes (model on the right, wake-word UI memes on both) |
 | 73    | Mandarin speech update, both eyes (model on the right, wake-word UI memes on both) |
 | >100  | Set MEME (meme id + 100) |
+
+Recordings are stored as `/sd/record/mobili_<number>.record`. Rows begin with
+`imu`, `speed`, or `gps`; the next field is a 64-bit boot timestamp in microseconds.
+GPS rows then contain fix age, latitude, longitude, altitude, speed in m/s, and satellite count.
 
 Commands `72` (English) and `73` (Mandarin) update the speech model on the right
 eye and wake-word UI memes on both eyes. The left eye relays the command before
