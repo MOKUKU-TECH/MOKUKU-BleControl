@@ -26,6 +26,7 @@ from PyQt5.QtWidgets import (
     QTableWidgetItem,
     QTabWidget,
     QFileDialog,
+    QScrollArea,
 )
 from PyQt5.QtCore import Qt, Q_ARG, QMetaObject, pyqtSignal
 from PyQt5.QtGui import QIntValidator, QDoubleValidator
@@ -59,6 +60,7 @@ INFO_QUERY_TITLES = {
     5: "Meme Version",
     57: "Right-eye Model",
 }
+RECORD_DIRECTORY = "/sd/record"
 
 
 def create_command_table(widget):
@@ -224,19 +226,29 @@ class MemeTestPanel(QDialog):
 
 class InfoQueriesPanel(QDialog):
     info_query_received = pyqtSignal(int, bool, str)
+    download_requested = pyqtSignal(str)
 
     def __init__(self, ble_client, parent=None):
         super().__init__(parent)
         self.ble_client = ble_client
         self.info_query_received.connect(self.display_info_query, Qt.QueuedConnection)
         self.setWindowTitle("BleClient Info Queries")
-        self.resize(460, 440)
+        self.resize(460, 560)
 
         layout = QVBoxLayout(self)
         self.results_text = QTextEdit(self)
         self.results_text.setReadOnly(True)
         self.results_text.setPlainText("Select a query to see its result.")
         layout.addWidget(self.results_text)
+
+        self.record_files_area = QScrollArea(self)
+        self.record_files_area.setWidgetResizable(True)
+        self.record_files_area.setMaximumHeight(180)
+        self.record_files_widget = QWidget(self.record_files_area)
+        self.record_files_layout = QVBoxLayout(self.record_files_widget)
+        self.record_files_area.setWidget(self.record_files_widget)
+        self.record_files_area.hide()
+        layout.addWidget(self.record_files_area)
 
         for message_id, title in INFO_QUERY_TITLES.items():
             button = QPushButton(title, self)
@@ -250,18 +262,43 @@ class InfoQueriesPanel(QDialog):
             self.results_text.setPlainText("Connect to MOKUKU over BLE first.")
             return
         self.results_text.setPlainText(f"Requesting {INFO_QUERY_TITLES[message_id]}...")
-        value = "/sd/record" if message_id == 60 else "0"
+        self.show_record_files([])
+        value = RECORD_DIRECTORY if message_id == 60 else "0"
         self.ble_client.request_info(message_id, self.info_query_received.emit, value)
+
+    def show_record_files(self, names):
+        while self.record_files_layout.count():
+            item = self.record_files_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        for name in names:
+            row = QWidget(self.record_files_widget)
+            row_layout = QHBoxLayout(row)
+            row_layout.setContentsMargins(0, 0, 0, 0)
+            row_layout.addWidget(QLabel(name, row), 1)
+            button = QPushButton("Download", row)
+            button.clicked.connect(
+                lambda checked=False, file_name=name: self.download_requested.emit(
+                    f"{RECORD_DIRECTORY}/{file_name}"
+                )
+            )
+            row_layout.addWidget(button)
+            self.record_files_layout.addWidget(row)
+        self.record_files_area.setVisible(bool(names))
 
     def display_info_query(self, message_id, success, result):
         title = INFO_QUERY_TITLES[message_id]
         if not success:
+            if message_id == 60:
+                self.show_record_files([])
             self.results_text.setPlainText(
                 f"{title}\n{result or 'The device could not complete this query.'}"
             )
             return
         if message_id == 60:
-            result = "\n".join(result.split(",")) if result else "No files returned."
+            names = [name for name in result.split(",") if name]
+            self.show_record_files(names)
+            result = f"{len(names)} file(s)" if names else "No files returned."
         elif message_id == 61:
             sizes = result.split("/", 1)
             if len(sizes) == 2:
@@ -383,7 +420,7 @@ class SimpleWindow(QWidget):
 
         # command layout
         self.download_input_box = QLineEdit(self)
-        self.download_input_box.setText("/sd/record")
+        self.download_input_box.setText(RECORD_DIRECTORY)
         self.download_button = QPushButton("Download File", self)
         self.download_button.clicked.connect(self.start_downloading_file)
         layout_download = QHBoxLayout()
@@ -425,6 +462,7 @@ class SimpleWindow(QWidget):
     def open_info_queries_panel(self):
         if not hasattr(self, "info_queries_panel"):
             self.info_queries_panel = InfoQueriesPanel(ble_client_widget.ble_client, self)
+            self.info_queries_panel.download_requested.connect(self.download_file)
         self.info_queries_panel.show()
         self.info_queries_panel.raise_()
 
@@ -443,7 +481,9 @@ class SimpleWindow(QWidget):
             QMessageBox.warning(self, "Download failed", result)
 
     def start_downloading_file(self):
-        download_file = self.download_input_box.text().strip()
+        self.download_file(self.download_input_box.text().strip())
+
+    def download_file(self, download_file):
         if not download_file or not ble_client_widget.ble_client.connected:
             return
         default_path = Path.home() / "Downloads"

@@ -60,17 +60,19 @@ server first; the devices reboot to run the update.
 
 Click **Info Queries** to open a panel with the latest response at the top and
 buttons for recording files, SD card space, firmware versions, MAC address, meme
-versions, and the right-eye WakeNet model below it. Results appear when the device
-replies. The model response identifies `wn10_himokuku` or reports another WakeNet
-model; the protocol does not return the other model's name.
+versions, and the right-eye WakeNet model below it. The recording files query
+shows each file with a **Download** button. The model response identifies
+`wn10_himokuku` or reports another WakeNet model; the protocol does not return
+the other model's name.
 
 ### Download a recording
 
-Connect over BLE, enter the full path shown by **Info Queries** (for example,
-`/sd/record/mobili_2.record`), and click **Download File**. Choose a local save
-location and keep the app connected until the byte counter reaches the file size
-and the completion message appears. A failed transfer leaves a partial file at
-the selected location.
+Connect over BLE, open **Info Queries**, request the recording files, and click
+**Download** beside the file you want. You can also enter its full path (for
+example, `/sd/record/mobili_2.record`) in the main window and click
+**Download File**. Choose a local save location and keep the app connected until
+the byte counter reaches the file size and the completion message appears. A
+failed transfer leaves a partial file at the selected location.
 
 ⚠️ **Important Notice**:
 
