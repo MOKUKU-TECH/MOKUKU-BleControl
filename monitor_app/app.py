@@ -28,7 +28,7 @@ from PyQt5.QtWidgets import (
     QFileDialog,
     QScrollArea,
 )
-from PyQt5.QtCore import Qt, Q_ARG, QMetaObject, pyqtSignal
+from PyQt5.QtCore import Qt, Q_ARG, QMetaObject, QTimer, pyqtSignal
 from PyQt5.QtGui import QIntValidator, QDoubleValidator
 
 import theme
@@ -249,13 +249,32 @@ class InfoQueriesPanel(QDialog):
         self.record_files_area.setWidget(self.record_files_widget)
         self.record_files_area.hide()
         layout.addWidget(self.record_files_area)
+        self.record_file_names = []
+        self.clearing_record_files = False
+        self.clear_batch_names = set()
+        self.clear_timeout = QTimer(self)
+        self.clear_timeout.setSingleShot(True)
+        self.clear_timeout.timeout.connect(
+            lambda: self.finish_clearing_record_files("No response while checking which recordings remain.")
+        )
+        self.query_buttons = []
 
         for message_id, title in INFO_QUERY_TITLES.items():
             button = QPushButton(title, self)
             button.clicked.connect(
                 lambda checked=False, query_id=message_id: self.request_info(query_id)
             )
-            layout.addWidget(button)
+            self.query_buttons.append(button)
+            if message_id == 60:
+                record_controls = QHBoxLayout()
+                record_controls.addWidget(button)
+                self.clear_recordings_button = QPushButton("Clear recordings", self)
+                self.clear_recordings_button.setEnabled(False)
+                self.clear_recordings_button.clicked.connect(self.clear_record_files)
+                record_controls.addWidget(self.clear_recordings_button)
+                layout.addLayout(record_controls)
+            else:
+                layout.addWidget(button)
 
     def request_info(self, message_id):
         if not self.ble_client.connected:
@@ -267,6 +286,7 @@ class InfoQueriesPanel(QDialog):
         self.ble_client.request_info(message_id, self.info_query_received.emit, value)
 
     def show_record_files(self, names):
+        self.record_file_names = names
         while self.record_files_layout.count():
             item = self.record_files_layout.takeAt(0)
             if item.widget():
@@ -282,15 +302,57 @@ class InfoQueriesPanel(QDialog):
                     f"{RECORD_DIRECTORY}/{file_name}"
                 )
             )
+            button.setEnabled(not self.clearing_record_files)
             row_layout.addWidget(button)
             self.record_files_layout.addWidget(row)
         self.record_files_area.setVisible(bool(names))
+        self.clear_recordings_button.setEnabled(bool(names) and not self.clearing_record_files)
+
+    def clear_record_files(self):
+        if not self.record_file_names or not self.ble_client.connected:
+            return
+        count = len(self.record_file_names)
+        answer = QMessageBox.question(
+            self,
+            "Clear recordings",
+            f"Delete all files in {RECORD_DIRECTORY}?\n{count} file(s) are currently listed. This cannot be undone.",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if answer != QMessageBox.Yes:
+            return
+        self.clearing_record_files = True
+        names = self.record_file_names
+        self.show_record_files([])
+        for button in self.query_buttons:
+            button.setEnabled(False)
+        self.delete_record_file_batch(names)
+
+    def delete_record_file_batch(self, names):
+        self.clear_batch_names = set(names)
+        self.results_text.setPlainText(f"Clearing files in {RECORD_DIRECTORY}...")
+        for name in names:
+            messager.push_string_message(62, f"{RECORD_DIRECTORY}/{name}")
+        self.ble_client.request_info(60, self.info_query_received.emit, RECORD_DIRECTORY)
+        self.clear_timeout.start(30000)
+
+    def finish_clearing_record_files(self, message):
+        self.clear_timeout.stop()
+        self.clearing_record_files = False
+        self.clear_batch_names.clear()
+        self.show_record_files(self.record_file_names)
+        for button in self.query_buttons:
+            button.setEnabled(True)
+        self.results_text.setPlainText(message)
 
     def display_info_query(self, message_id, success, result):
         title = INFO_QUERY_TITLES[message_id]
         if not success:
             if message_id == 60:
                 self.show_record_files([])
+                if self.clearing_record_files:
+                    self.finish_clearing_record_files("Could not verify which recordings remain.")
+                    return
             self.results_text.setPlainText(
                 f"{title}\n{result or 'The device could not complete this query.'}"
             )
@@ -298,6 +360,17 @@ class InfoQueriesPanel(QDialog):
         if message_id == 60:
             names = [name for name in result.split(",") if name]
             self.show_record_files(names)
+            if self.clearing_record_files:
+                self.clear_timeout.stop()
+                if not names:
+                    self.finish_clearing_record_files("All recordings were cleared.")
+                elif self.clear_batch_names.issubset(names):
+                    self.finish_clearing_record_files(
+                        f"Some files could not be deleted. {len(names)} file(s) remain."
+                    )
+                else:
+                    self.delete_record_file_batch(names)
+                return
             result = f"{len(names)} file(s)" if names else "No files returned."
         elif message_id == 61:
             sizes = result.split("/", 1)

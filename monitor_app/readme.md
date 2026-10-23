@@ -61,7 +61,9 @@ server first; the devices reboot to run the update.
 Click **Info Queries** to open a panel with the latest response at the top and
 buttons for recording files, SD card space, firmware versions, MAC address, meme
 versions, and the right-eye WakeNet model below it. The recording files query
-shows each file with a **Download** button. The model response identifies
+shows each file with a **Download** button. **Clear recordings** asks for
+confirmation, deletes the files in `/sd/record`, and refreshes the list to show
+anything that remains. The model response identifies
 `wn10_himokuku` or reports another WakeNet model; the protocol does not return
 the other model's name.
 
