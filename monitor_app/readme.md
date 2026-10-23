@@ -76,6 +76,9 @@ example, `/sd/record/mobili_2.record`) in the main window and click
 the byte counter reaches the file size and the completion message appears. A
 failed transfer leaves a partial file at the selected location.
 
+Install the matching MobiliMOKUKU firmware before using this download flow; it
+caps file replies to the negotiated BLE MTU.
+
 ⚠️ **Important Notice**:
 
 1. The system has **two independent chips**, each handling a separate screen:

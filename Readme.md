@@ -315,7 +315,7 @@ Send:
 
 ```
 id = 66
-data_size (1 byte, <255)
+data_size (1 byte, <=255)
 file_key (4 bytes)
 begin_position (4 bytes)
 ```
@@ -328,6 +328,10 @@ data_size (1 byte)
 begin_position (4 bytes)
 data (n bytes)
 ```
+
+Request up to 255 bytes. The device limits each reply to the negotiated ATT MTU
+minus nine bytes for headers. Continue from the returned offset until the
+reported file size is received; a short reply alone does not mean end-of-file.
 
 # 4. Upload File to MOKUKU
 

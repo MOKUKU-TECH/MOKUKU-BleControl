@@ -2,9 +2,7 @@
 
 import asyncio
 import struct
-import psutil
 import threading
-import time
 import os
 from PyQt5.QtWidgets import (
     QApplication,
@@ -30,6 +28,7 @@ from common.log import logging
 from messager import messager
 
 FILE_BUFFER_SIZE = 128
+FILE_DOWNLOAD_CHUNK_SIZE = 255
 CONFIG_FILE_PATH = "assets/config.txt"
 
 
@@ -127,12 +126,12 @@ class FileTransfer:
                 self.call_complete(f"Cannot write file: {error}")
                 return False
             self.current_pos += data_size
-        if data_size < FILE_BUFFER_SIZE:
-            if self.current_pos != self.file_size:
-                self.call_complete(f"Download stopped at {self.current_pos} of {self.file_size} bytes")
-                return False
+        if self.current_pos == self.file_size:
             logging.info("[FILE] download file transfer complete: %s", self.download_path)
             self.call_complete()
+            return False
+        if data_size == 0:
+            self.call_complete(f"Download stopped at {self.current_pos} of {self.file_size} bytes")
             return False
         return True
 
@@ -226,6 +225,7 @@ class BleClient:
 
     def stop_client(self):
         self.client_stop = True
+        messager.wake_ack_sender()
 
     def scan_for_device_threading(self, scan_done_event):
         if self.running:
@@ -350,47 +350,71 @@ class BleClient:
                 logging.info("✅ Ack characteristic found.")
 
                 self.connected = True
-                last_time = time.time()
-                check_interval = 2  # check services every 5 seconds
-                while not self.client_stop:
-                    curr_time = time.time()
-                    if (curr_time - last_time) > check_interval:
-                        services = client.services
-                        last_time = curr_time
+                loop = asyncio.get_running_loop()
+                message_ready = asyncio.Event()
 
-                    if self.send_realtime_data:
+                def wake_sender():
+                    try:
+                        loop.call_soon_threadsafe(message_ready.set)
+                    except RuntimeError:
+                        pass
+
+                messager.set_ack_message_wakeup(wake_sender)
+                next_realtime_send = loop.time()
+                while not self.client_stop:
+                    if not client.is_connected:
+                        break
+                    now = loop.time()
+                    if self.send_realtime_data and now >= next_realtime_send:
                         byte_data = messager.get_message_to_send()
-                        # print("Sent:", [hex(b) for b in byte_data])
                         await client.write_gatt_char(
                             self.CHARACTERISTIC_UUID_MAIN, byte_data
                         )
-                        await asyncio.sleep(0.5)  # 500 ms
+                        next_realtime_send = loop.time() + 0.5
 
                     if self.client_stop:
                         break
 
+                    message_ready.clear()
                     message_to_send = messager.pop_ack_message_to_send()
-                    if message_to_send is None:
-                        if (self.last_file_request and self.remote_file.file
-                                and time.monotonic() - self.file_request_sent_at > 5):
+                    if message_to_send is not None:
+                        if message_to_send[0] == 66:
+                            self.last_file_request = message_to_send
+                            self.file_request_sent_at = loop.time()
+                        await client.write_gatt_char(
+                            self.CHARACTERISTIC_UUID_ACK,
+                            message_to_send,
+                            response=message_to_send[0] != 66,
+                        )
+                        continue
+
+                    now = loop.time()
+                    if self.last_file_request and self.remote_file.file:
+                        remaining = 5 - (now - self.file_request_sent_at)
+                        if remaining <= 0:
                             if self.file_request_retries == 3:
                                 self.last_file_request = None
                                 self.remote_file.call_complete("No file data received after 3 retries")
                             else:
                                 self.file_request_retries += 1
-                                self.file_request_sent_at = time.monotonic()
+                                self.file_request_sent_at = now
                                 await client.write_gatt_char(
-                                    self.CHARACTERISTIC_UUID_ACK, self.last_file_request
+                                    self.CHARACTERISTIC_UUID_ACK,
+                                    self.last_file_request,
+                                    response=False,
                                 )
-                        await asyncio.sleep(0.01 if self.remote_file.file else 0.1)
+                            continue
                     else:
-                        if message_to_send[0] == 66:
-                            self.last_file_request = message_to_send
-                            self.file_request_sent_at = time.monotonic()
-                        await client.write_gatt_char(
-                            self.CHARACTERISTIC_UUID_ACK, message_to_send
-                        )
-                        # await asyncio.sleep(0.1)  # 100 ms
+                        remaining = None
+
+                    if self.send_realtime_data:
+                        realtime_wait = max(0, next_realtime_send - now)
+                        remaining = min(remaining, realtime_wait) if remaining is not None else realtime_wait
+                    remaining = min(remaining, 1.0) if remaining is not None else 1.0
+                    try:
+                        await asyncio.wait_for(message_ready.wait(), timeout=remaining)
+                    except asyncio.TimeoutError:
+                        pass
 
                 logging.info("Process End!")
         except BleakError as e:
@@ -398,6 +422,7 @@ class BleClient:
                 self.message_label.setText(f"BLE Error: {str(e)}")
             logging.error(f"BLE Error: {str(e)}")
         finally:
+            messager.set_ack_message_wakeup(None)
             self.connected = False
             if self.remote_file.complete_callback:
                 self.remote_file.call_complete("BLE connection closed before download completed")
@@ -407,7 +432,7 @@ class BleClient:
         # id(=66), buffer_size, file_id, begin
         byte_data = []
         byte_data.extend(struct.pack("<B", 66))  # first byte for message type ID
-        byte_data.extend(struct.pack("<B", FILE_BUFFER_SIZE))
+        byte_data.extend(struct.pack("<B", FILE_DOWNLOAD_CHUNK_SIZE))
         byte_data.extend(struct.pack("<I", self.remote_file.file_id))
         byte_data.extend(struct.pack("<I", self.remote_file.current_pos))
         messager.push_ack_message(byte_data)
