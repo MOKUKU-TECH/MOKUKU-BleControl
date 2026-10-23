@@ -1,5 +1,6 @@
 import matplotlib.pyplot as plt
 import folium
+from recording_format import iter_recording
 
 # Step 1: Read data from the file
 file_path = "data/mobili_7.record"  # Replace with your file path
@@ -7,32 +8,11 @@ file_path = "data/mobili_7.record"  # Replace with your file path
 imu_data = []
 gps_data = []
 
-with open(file_path, "r") as file:
-    for line in file:
-        parts = line.strip().split()
-        if parts[0] == "imu":
-            imu_data.append(
-                {
-                    "time": int(parts[1]),
-                    "ax": float(parts[2]),
-                    "ay": float(parts[3]),
-                    "az": float(parts[4]),
-                    "gx": float(parts[5]),
-                    "gy": float(parts[6]),
-                    "gz": float(parts[7]),
-                }
-            )
-        elif parts[0] == "gps":
-            gps_data.append(
-                {
-                    "time": int(parts[1]),
-                    "lat": float(parts[3]),
-                    "lng": float(parts[4]),
-                    "alt": float(parts[5]),
-                    "speed": float(parts[6]),
-                    "num_satellites": int(parts[7]),
-                }
-            )
+for record in iter_recording(file_path):
+    if record["type"] == "imu":
+        imu_data.append(record)
+    elif record["type"] == "gps":
+        gps_data.append(record)
 
 # Print parsed data for verification
 print("IMU Data:", len(imu_data))

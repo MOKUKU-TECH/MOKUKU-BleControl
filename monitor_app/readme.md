@@ -78,6 +78,9 @@ BLE disconnects, the app reconnects and resumes from the saved byte offset.
 It stops after three reconnect attempts without download progress. A failed
 transfer leaves a partial file at the selected location.
 
+New firmware saves binary `.record` files. Analyze them with the scripts in
+`record_analysis/`, which also read older text recordings.
+
 Install the matching MobiliMOKUKU firmware before using this download flow; it
 caps file replies to the negotiated BLE MTU.
 

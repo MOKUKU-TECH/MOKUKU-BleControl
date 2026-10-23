@@ -82,9 +82,10 @@ takes one of:
 | 73    | Mandarin speech update, both eyes (model on the right, wake-word UI memes on both) |
 | >100  | Set MEME (meme id + 100) |
 
-Recordings are stored as `/sd/record/mobili_<number>.record`. Rows begin with
-`imu`, `speed`, or `gps`; the next field is a 64-bit boot timestamp in microseconds.
-GPS rows then contain fix age, latitude, longitude, altitude, speed in m/s, and satellite count.
+Recordings are stored as `/sd/record/mobili_<number>.record`. New firmware
+writes framed binary records with per-record CRC; older recordings use text
+rows. The `record_analysis` readers accept both formats. The binary format is
+specified in the parent repository's `doc/RECORDING_BINARY_FORMAT.md`.
 
 Commands `72` (English) and `73` (Mandarin) update the speech model on the right
 eye and wake-word UI memes on both eyes. The left eye relays the command before
