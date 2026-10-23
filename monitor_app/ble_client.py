@@ -186,11 +186,18 @@ class BleClient:
         self.remote_file = FileTransfer()
         self.local_file = FileTransfer()
         self.meme_states_callbacks = []
+        self.info_query_callbacks = {}
 
     def request_meme_states(self, callback):
         self.meme_states_callbacks.append(callback)
         messager.push_meme_states_request()
-        messager.push_himokuku_wakeword_model_request()
+
+    def request_info(self, message_id, callback, value="0"):
+        self.info_query_callbacks[message_id] = callback
+        if message_id == 57:
+            messager.push_himokuku_wakeword_model_request()
+        else:
+            messager.push_string_message(message_id, value)
 
     def stop_client(self):
         self.client_stop = True
@@ -365,6 +372,9 @@ class BleClient:
 
     # This callback is called every time ESP32 sends a notification
     def notification_handler(self, sender: int, data: bytearray):
+        if not data:
+            logging.error("[BLE] empty notification")
+            return
         if data[0] == 65:
             # getting file open response
             self.remote_file.downloadfile_remote_created(data)
@@ -392,18 +402,30 @@ class BleClient:
             for callback in callbacks:
                 callback(meme_states)
         elif data[0] == 57:
+            callback = self.info_query_callbacks.pop(57, None)
             if len(data) != 3 or data[1] != 1:
                 logging.error(f"[SR] invalid wakeword-model response: {list(data)}")
+                if callback:
+                    callback(57, False, "Invalid right-eye model response.")
                 return
-            logging.info(
-                "[SR] right-eye wakeword model: %s",
-                "wn10_himokuku" if data[2] else "other",
-            )
+            model = "wn10_himokuku" if data[2] else "Other WakeNet model"
+            logging.info("[SR] right-eye wakeword model: %s", model)
+            if callback:
+                callback(57, True, model)
         else:
-            data_str = bytes.fromhex(data[2:].hex()).decode("utf-8")
+            if len(data) < 2:
+                logging.error("[BLE] incomplete notification: %s", list(data))
+                callback = self.info_query_callbacks.pop(data[0], None)
+                if callback:
+                    callback(data[0], False, "Incomplete device response.")
+                return
+            data_str = bytes(data[2:]).decode("utf-8", errors="replace")
             logging.info(
                 f"📥 Received {len(data)}, id: {data[0]}, ret: {data[1]}, data: {data_str}"
             )
+            callback = self.info_query_callbacks.pop(data[0], None)
+            if callback:
+                callback(data[0], data[1] == 1, data_str)
 
 
 class BleQtWidget:

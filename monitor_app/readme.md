@@ -56,6 +56,14 @@ After connecting, select **English speech update (both eyes)** or
 the selected language model on the right eye. Configure WiFi and the OTA
 server first; the devices reboot to run the update.
 
+### Info Queries
+
+Click **Info Queries** to open a panel with the latest response at the top and
+buttons for recording files, SD card space, firmware versions, MAC address, meme
+versions, and the right-eye WakeNet model below it. Results appear when the device
+replies. The model response identifies `wn10_himokuku` or reports another WakeNet
+model; the protocol does not return the other model's name.
+
 ⚠️ **Important Notice**:
 
 1. The system has **two independent chips**, each handling a separate screen:

@@ -21,6 +21,7 @@ from PyQt5.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
     QDialog,
+    QTextEdit,
     QTableWidget,
     QTableWidgetItem,
     QTabWidget,
@@ -48,6 +49,14 @@ APP_TAG_NAMES = {
     4: "Play",
     5: "不可编辑",
     6: "Festival",
+}
+INFO_QUERY_TITLES = {
+    60: "Files in /sd/record",
+    61: "SD Card Info",
+    3: "Firmware Version",
+    4: "MAC Address",
+    5: "Meme Version",
+    57: "Right-eye Model",
 }
 
 
@@ -212,6 +221,57 @@ class MemeTestPanel(QDialog):
         tag_enabled_box.blockSignals(False)
 
 
+class InfoQueriesPanel(QDialog):
+    info_query_received = pyqtSignal(int, bool, str)
+
+    def __init__(self, ble_client, parent=None):
+        super().__init__(parent)
+        self.ble_client = ble_client
+        self.info_query_received.connect(self.display_info_query, Qt.QueuedConnection)
+        self.setWindowTitle("BleClient Info Queries")
+        self.resize(460, 440)
+
+        layout = QVBoxLayout(self)
+        self.results_text = QTextEdit(self)
+        self.results_text.setReadOnly(True)
+        self.results_text.setPlainText("Select a query to see its result.")
+        layout.addWidget(self.results_text)
+
+        for message_id, title in INFO_QUERY_TITLES.items():
+            button = QPushButton(title, self)
+            button.clicked.connect(
+                lambda checked=False, query_id=message_id: self.request_info(query_id)
+            )
+            layout.addWidget(button)
+
+    def request_info(self, message_id):
+        if not self.ble_client.connected:
+            self.results_text.setPlainText("Connect to MOKUKU over BLE first.")
+            return
+        self.results_text.setPlainText(f"Requesting {INFO_QUERY_TITLES[message_id]}...")
+        value = "/sd/record" if message_id == 60 else "0"
+        self.ble_client.request_info(message_id, self.info_query_received.emit, value)
+
+    def display_info_query(self, message_id, success, result):
+        title = INFO_QUERY_TITLES[message_id]
+        if not success:
+            self.results_text.setPlainText(
+                f"{title}\n{result or 'The device could not complete this query.'}"
+            )
+            return
+        if message_id == 60:
+            result = "\n".join(result.split(",")) if result else "No files returned."
+        elif message_id == 61:
+            sizes = result.split("/", 1)
+            if len(sizes) == 2:
+                result = f"Free: {sizes[0]} MB\nTotal: {sizes[1]} MB"
+        elif message_id in (3, 5):
+            versions = result.split("/", 1)
+            if len(versions) == 2:
+                result = f"INS eye: {versions[0]}\nAI eye: {versions[1]}"
+        self.results_text.setPlainText(f"{title}\n{result or 'No data returned.'}")
+
+
 class SimpleWindow(QWidget):
     width = 800
     height = 600
@@ -314,27 +374,9 @@ class SimpleWindow(QWidget):
         layout.addWidget(self.cmd_table)
         layout.addLayout(layout_cmd)
 
-        test_label = theme.section_label("Info Queries")
-        test_label.setFixedSize(self.width, self.line_height)
-        layout.addWidget(test_label)
-
-        self.list_directory_button = QPushButton("List /sd/record", self)
-        self.list_directory_button.clicked.connect(self.test_list_directory)
-        self.sd_info_button = QPushButton("SD Card Info", self)
-        self.sd_info_button.clicked.connect(self.test_sd_info)
-        self.firmware_version_button = QPushButton("Firmware Version", self)
-        self.firmware_version_button.clicked.connect(self.test_firmware_version)
-        self.mac_address_button = QPushButton("MAC Address", self)
-        self.mac_address_button.clicked.connect(self.test_mac_address)
-        self.meme_version_button = QPushButton("Meme Version", self)
-        self.meme_version_button.clicked.connect(self.test_meme_version)
-        layout_test = QHBoxLayout()
-        layout_test.addWidget(self.list_directory_button)
-        layout_test.addWidget(self.sd_info_button)
-        layout_test.addWidget(self.firmware_version_button)
-        layout_test.addWidget(self.mac_address_button)
-        layout_test.addWidget(self.meme_version_button)
-        layout.addLayout(layout_test)
+        self.info_queries_button = QPushButton("Info Queries", self)
+        self.info_queries_button.clicked.connect(self.open_info_queries_panel)
+        layout.addWidget(self.info_queries_button)
 
         # command layout
         self.download_input_box = QLineEdit(self)
@@ -377,20 +419,11 @@ class SimpleWindow(QWidget):
 
         self.setLayout(layout)
 
-    def test_list_directory(self):
-        messager.push_string_message(60, "/sd/record")
-
-    def test_sd_info(self):
-        messager.push_string_message(61, "0")
-
-    def test_firmware_version(self):
-        messager.push_string_message(3, "0")
-
-    def test_mac_address(self):
-        messager.push_string_message(4, "0")
-
-    def test_meme_version(self):
-        messager.push_string_message(5, "0")
+    def open_info_queries_panel(self):
+        if not hasattr(self, "info_queries_panel"):
+            self.info_queries_panel = InfoQueriesPanel(ble_client_widget.ble_client, self)
+        self.info_queries_panel.show()
+        self.info_queries_panel.raise_()
 
     def download_complete_callback(self):
         if self.downloading_dialog:
