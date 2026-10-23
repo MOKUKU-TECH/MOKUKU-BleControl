@@ -64,6 +64,14 @@ versions, and the right-eye WakeNet model below it. Results appear when the devi
 replies. The model response identifies `wn10_himokuku` or reports another WakeNet
 model; the protocol does not return the other model's name.
 
+### Download a recording
+
+Connect over BLE, enter the full path shown by **Info Queries** (for example,
+`/sd/record/mobili_2.record`), and click **Download File**. Choose a local save
+location and keep the app connected until the byte counter reaches the file size
+and the completion message appears. A failed transfer leaves a partial file at
+the selected location.
+
 ⚠️ **Important Notice**:
 
 1. The system has **two independent chips**, each handling a separate screen:

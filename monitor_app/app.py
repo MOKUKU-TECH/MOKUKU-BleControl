@@ -25,6 +25,7 @@ from PyQt5.QtWidgets import (
     QTableWidget,
     QTableWidgetItem,
     QTabWidget,
+    QFileDialog,
 )
 from PyQt5.QtCore import Qt, Q_ARG, QMetaObject, pyqtSignal
 from PyQt5.QtGui import QIntValidator, QDoubleValidator
@@ -273,12 +274,14 @@ class InfoQueriesPanel(QDialog):
 
 
 class SimpleWindow(QWidget):
+    download_finished = pyqtSignal(bool, str)
     width = 800
     height = 600
     line_height = 30
 
     def __init__(self):
         super().__init__()
+        self.download_finished.connect(self.finish_download)
         self.initialize_ui()
         logging.info(" app started")
 
@@ -426,30 +429,42 @@ class SimpleWindow(QWidget):
         self.info_queries_panel.raise_()
 
     def download_complete_callback(self):
+        transfer = ble_client_widget.ble_client.remote_file
+        self.download_finished.emit(transfer.error is None, transfer.error or transfer.download_path)
+
+    def finish_download(self, successful, result):
         if self.downloading_dialog:
             self.downloading_dialog.close()
-        self.download_button.setEnabled(True)  # Re-enable button
+            self.downloading_dialog = None
+        self.download_button.setEnabled(True)
+        if successful:
+            QMessageBox.information(self, "Download complete", f"Saved to {result}")
+        else:
+            QMessageBox.warning(self, "Download failed", result)
 
     def start_downloading_file(self):
-        if len(self.download_input_box.text()) == 0:
-            return
         download_file = self.download_input_box.text().strip()
-        logging.info("start to download " + download_file)
-
-        if not ble_client_widget.ble_client.connected:
+        if not download_file or not ble_client_widget.ble_client.connected:
             return
-        # 1. Create and show custom loading dialog
-        self.downloading_dialog = DownloadingDialog(self, title="Downloading")
-        self.downloading_dialog.file_transfer = ble_client_widget.ble_client.remote_file
-        self.downloading_dialog.show()
-        # 2. Disable UI elements during scan
-        self.download_button.setEnabled(False)
-
-        # 3. Run scan asynchronously (non-blocking)
-        messager.push_string_message(65, download_file)
-        ble_client_widget.ble_client.remote_file.complete_callback = (
-            self.download_complete_callback
+        default_path = Path.home() / "Downloads"
+        if not default_path.is_dir():
+            default_path = Path.home()
+        file_name = Path(download_file).name
+        save_path, _ = QFileDialog.getSaveFileName(
+            self, "Save MOKUKU recording", str(default_path / file_name)
         )
+        if not save_path:
+            return
+        logging.info("start to download %s to %s", download_file, save_path)
+
+        self.downloading_dialog = DownloadingDialog(self, title="Downloading")
+        transfer = ble_client_widget.ble_client.remote_file
+        self.downloading_dialog.file_transfer = transfer
+        self.downloading_dialog.show()
+        self.download_button.setEnabled(False)
+        transfer.download_path = save_path
+        transfer.complete_callback = self.download_complete_callback
+        messager.push_string_message(65, download_file)
 
     def upload_complete_callback(self):
         if self.uploading_dialog:

@@ -288,7 +288,7 @@ The device responds on **Transfer Data** as `57, 1, value`: `value = 1` means
 
 # 3. Download File from MOKUKU
 
-*(txt files only)*
+Files are transferred as bytes, including `.record` recordings.
 
 ### Step 1 — Open File
 

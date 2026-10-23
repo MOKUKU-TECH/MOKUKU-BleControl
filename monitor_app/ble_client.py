@@ -34,16 +34,11 @@ CONFIG_FILE_PATH = "assets/config.txt"
 
 
 class FileTransfer:
-    file_id = 0
-    file_size = 0
-    current_pos = 0
-    file = None
-    complete_callback = None
-
     def __init__(self, file_path=None):
+        self.complete_callback = None
         self.reset()
         if file_path:
-            open_file(file_path)
+            self.open_file(file_path)
 
     def open_file(self, file_path):
         self.file = open(file_path, "rb")
@@ -54,6 +49,8 @@ class FileTransfer:
         self.file_size = 0
         self.current_pos = 0
         self.file = None
+        self.download_path = None
+        self.error = None
 
     def set(self, id, size, file_name):
         self.file_id = id
@@ -68,19 +65,37 @@ class FileTransfer:
         return byte_data
 
     def downloadfile_remote_created(self, data):
-        # getting file open response
+        if len(data) != 10 or data[1] != 1:
+            self.call_complete("Invalid file open response")
+            return False
         ptr_value = int.from_bytes(data[2:6], byteorder="little")
         file_size = int.from_bytes(data[6:10], byteorder="little")
         logging.info(
             f"📥 Received file open {data[0]} {data[1]} : 0x{ptr_value:08X} {file_size}"
         )
-        if file_size == 0:
-            logging.error("[FILE] file is Empty")
-            self.call_complete()
+        if ptr_value == 0 or file_size == 0:
+            self.call_complete("Remote file is missing or empty")
             return False
-        self.set(ptr_value, file_size, "data/test.rec")
+        if not self.download_path:
+            self.call_complete("No download destination selected")
+            return False
+        try:
+            self.set(ptr_value, file_size, self.download_path)
+        except OSError as error:
+            self.call_complete(f"Cannot save file: {error}")
+            return False
+        return True
 
-    def call_complete(self):
+    def call_complete(self, error=None):
+        if self.file and not self.file.closed:
+            try:
+                self.file.close()
+            except OSError as close_error:
+                if error is None:
+                    error = f"Cannot finish saving file: {close_error}"
+        self.error = error
+        if error:
+            logging.error("[FILE] %s", error)
         if self.complete_callback:
             self.complete_callback()
             self.complete_callback = None
@@ -88,8 +103,9 @@ class FileTransfer:
 
     def read_file_data(self, data):
         if self.file is None:
-            logging.error("[FILE] file is None")
-            self.call_complete()
+            return False
+        if len(data) < 6 or len(data) != data[1] + 6:
+            self.call_complete("Invalid file data packet")
             return False
         data_size = data[1]
         start_pos = int.from_bytes(data[2:6], byteorder="little")
@@ -101,14 +117,21 @@ class FileTransfer:
             )
             return True
 
-        # print progress
-
         if data_size > 0:
-            self.file.write(data[6:])
+            if self.current_pos + data_size > self.file_size:
+                self.call_complete("File data exceeds the reported size")
+                return False
+            try:
+                self.file.write(data[6:])
+            except OSError as error:
+                self.call_complete(f"Cannot write file: {error}")
+                return False
             self.current_pos += data_size
         if data_size < FILE_BUFFER_SIZE:
-            logging.info(f"[FILE] download file transfer complete")
-            self.file.close()
+            if self.current_pos != self.file_size:
+                self.call_complete(f"Download stopped at {self.current_pos} of {self.file_size} bytes")
+                return False
+            logging.info("[FILE] download file transfer complete: %s", self.download_path)
             self.call_complete()
             return False
         return True
@@ -147,7 +170,6 @@ class FileTransfer:
             messager.push_ack_message(byte_data)
 
             logging.info(f"[FILE] upload file transfer complete")
-            self.file.close()
             self.call_complete()
             return
         self.current_pos += len(chunk)
@@ -346,7 +368,7 @@ class BleClient:
 
                     message_to_send = messager.pop_ack_message_to_send()
                     if message_to_send is None:
-                        await asyncio.sleep(0.1)  # 100 ms
+                        await asyncio.sleep(0.01 if self.remote_file.file else 0.1)
                     else:
                         await client.write_gatt_char(
                             self.CHARACTERISTIC_UUID_ACK, message_to_send
@@ -358,7 +380,10 @@ class BleClient:
             if self.message_label:
                 self.message_label.setText(f"BLE Error: {str(e)}")
             logging.error(f"BLE Error: {str(e)}")
+        finally:
             self.connected = False
+            if self.remote_file.complete_callback:
+                self.remote_file.call_complete("BLE connection closed before download completed")
         logging.info("ble client stopped!")
 
     def require_file_data(self):
@@ -376,9 +401,8 @@ class BleClient:
             logging.error("[BLE] empty notification")
             return
         if data[0] == 65:
-            # getting file open response
-            self.remote_file.downloadfile_remote_created(data)
-            self.require_file_data()
+            if self.remote_file.downloadfile_remote_created(data):
+                self.require_file_data()
         elif data[0] == 66:
             if self.remote_file.read_file_data(data):
                 self.require_file_data()

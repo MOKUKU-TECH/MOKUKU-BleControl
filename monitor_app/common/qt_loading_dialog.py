@@ -55,22 +55,29 @@ class LoadingDialog(QDialog):
 
 
 class DownloadingDialog(LoadingDialog):
-    current_prograss = 0
-    file_transfer = None
+    def __init__(self, parent=None, title="Downloading"):
+        self.file_transfer = None
+        super().__init__(parent, title)
+        self.setFixedSize(340, 110)
 
     def update_ellipsis(self):
-        if self.file_transfer and self.file_transfer.file_size > 0:
-            transfer_rate = (
-                100 * self.file_transfer.current_pos / self.file_transfer.file_size
-            )
-            self.progress_bar.setValue(int(transfer_rate))
         self.ellipsis_count = (self.ellipsis_count + 1) % 4
-        self.message_label.setText(f"{self.title} {'.' * self.ellipsis_count}")
+        if self.file_transfer and self.file_transfer.file_size > 0:
+            current = self.file_transfer.current_pos
+            total = self.file_transfer.file_size
+            self.progress_bar.setValue(int(1000 * current / total))
+            self.progress_bar.setFormat(f"{100 * current / total:.1f}%")
+            self.message_label.setText(
+                f"{current:,} / {total:,} bytes ({100 * current / total:.1f}%)"
+            )
+        else:
+            self.message_label.setText(f"{self.title} {'.' * self.ellipsis_count}")
 
     def create_extented_elements(self):
         elements = []
         self.progress_bar = QProgressBar(self)
-        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setRange(0, 1000)
+        self.progress_bar.setFormat("0.0%")
         self.progress_bar.setValue(0)
         elements.append(self.progress_bar)
         return elements
