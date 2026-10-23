@@ -56,6 +56,34 @@ After connecting, select **English speech update (both eyes)** or
 the selected language model on the right eye. Configure WiFi and the OTA
 server first; the devices reboot to run the update.
 
+### Info Queries
+
+Click **Info Queries** to open a panel with the latest response at the top and
+buttons for recording files, SD card space, firmware versions, MAC address, meme
+versions, and the right-eye WakeNet model below it. The recording files query
+shows each file with a **Download** button. **Clear recordings** asks for
+confirmation, deletes the files in `/sd/record`, and refreshes the list to show
+anything that remains. The model response identifies
+`wn10_himokuku` or reports another WakeNet model; the protocol does not return
+the other model's name.
+
+### Download a recording
+
+Connect over BLE, open **Info Queries**, request the recording files, and click
+**Download** beside the file you want. You can also enter its full path (for
+example, `/sd/record/mobili_2.record`) in the main window and click
+**Download File**. Choose a local save location and keep the app connected until
+the byte counter reaches the file size and the completion message appears. If
+BLE disconnects, the app reconnects and resumes from the saved byte offset.
+It stops after three reconnect attempts without download progress. A failed
+transfer leaves a partial file at the selected location.
+
+New firmware saves binary `.record` files. Analyze them with the scripts in
+`record_analysis/`, which also read older text recordings.
+
+Install the matching MobiliMOKUKU firmware before using this download flow; it
+caps file replies to the negotiated BLE MTU.
+
 ⚠️ **Important Notice**:
 
 1. The system has **two independent chips**, each handling a separate screen:

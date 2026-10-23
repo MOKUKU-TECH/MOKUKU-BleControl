@@ -82,9 +82,10 @@ takes one of:
 | 73    | Mandarin speech update, both eyes (model on the right, wake-word UI memes on both) |
 | >100  | Set MEME (meme id + 100) |
 
-Recordings are stored as `/sd/record/mobili_<number>.record`. Rows begin with
-`imu`, `speed`, or `gps`; the next field is a 64-bit boot timestamp in microseconds.
-GPS rows then contain fix age, latitude, longitude, altitude, speed in m/s, and satellite count.
+Recordings are stored as `/sd/record/mobili_<number>.record`. New firmware
+writes framed binary records with per-record CRC; older recordings use text
+rows. The `record_analysis` readers accept both formats. The binary format is
+specified in the parent repository's `doc/RECORDING_BINARY_FORMAT.md`.
 
 Commands `72` (English) and `73` (Mandarin) update the speech model on the right
 eye and wake-word UI memes on both eyes. The left eye relays the command before
@@ -288,7 +289,7 @@ The device responds on **Transfer Data** as `57, 1, value`: `value = 1` means
 
 # 3. Download File from MOKUKU
 
-*(txt files only)*
+Files are transferred as bytes, including `.record` recordings.
 
 ### Step 1 — Open File
 
@@ -315,7 +316,7 @@ Send:
 
 ```
 id = 66
-data_size (1 byte, <255)
+data_size (1 byte, <=255)
 file_key (4 bytes)
 begin_position (4 bytes)
 ```
@@ -328,6 +329,10 @@ data_size (1 byte)
 begin_position (4 bytes)
 data (n bytes)
 ```
+
+Request up to 255 bytes. The device limits each reply to the negotiated ATT MTU
+minus nine bytes for headers. Continue from the returned offset until the
+reported file size is received; a short reply alone does not mean end-of-file.
 
 # 4. Upload File to MOKUKU
 
