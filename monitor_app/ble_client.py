@@ -207,6 +207,9 @@ class BleClient:
         self.message_label = None
         self.remote_file = FileTransfer()
         self.local_file = FileTransfer()
+        self.last_file_request = None
+        self.file_request_sent_at = 0
+        self.file_request_retries = 0
         self.meme_states_callbacks = []
         self.info_query_callbacks = {}
 
@@ -368,8 +371,22 @@ class BleClient:
 
                     message_to_send = messager.pop_ack_message_to_send()
                     if message_to_send is None:
+                        if (self.last_file_request and self.remote_file.file
+                                and time.monotonic() - self.file_request_sent_at > 5):
+                            if self.file_request_retries == 3:
+                                self.last_file_request = None
+                                self.remote_file.call_complete("No file data received after 3 retries")
+                            else:
+                                self.file_request_retries += 1
+                                self.file_request_sent_at = time.monotonic()
+                                await client.write_gatt_char(
+                                    self.CHARACTERISTIC_UUID_ACK, self.last_file_request
+                                )
                         await asyncio.sleep(0.01 if self.remote_file.file else 0.1)
                     else:
+                        if message_to_send[0] == 66:
+                            self.last_file_request = message_to_send
+                            self.file_request_sent_at = time.monotonic()
                         await client.write_gatt_char(
                             self.CHARACTERISTIC_UUID_ACK, message_to_send
                         )
@@ -401,9 +418,13 @@ class BleClient:
             logging.error("[BLE] empty notification")
             return
         if data[0] == 65:
+            self.last_file_request = None
+            self.file_request_retries = 0
             if self.remote_file.downloadfile_remote_created(data):
                 self.require_file_data()
         elif data[0] == 66:
+            self.last_file_request = None
+            self.file_request_retries = 0
             if self.remote_file.read_file_data(data):
                 self.require_file_data()
         elif data[0] == 63:
