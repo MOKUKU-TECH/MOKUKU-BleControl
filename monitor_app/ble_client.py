@@ -312,16 +312,20 @@ class BleClient:
     async def connect_to_device(self):
         self.client_stop = False
         reconnect_attempts = 0
+        last_progress_position = self.remote_file.current_pos
         while not self.client_stop:
             await self.run_connection()
             self.connected = False
             if not self.remote_file.complete_callback or self.client_stop:
                 break
+            if self.remote_file.current_pos > last_progress_position:
+                reconnect_attempts = 0
+                last_progress_position = self.remote_file.current_pos
             if reconnect_attempts == 3:
                 break
             reconnect_attempts += 1
             logging.warning(
-                "[FILE] BLE disconnected at %d/%d bytes; reconnecting (%d/3)",
+                "[FILE] BLE disconnected at %d/%d bytes; reconnecting (attempt %d/3 without progress)",
                 self.remote_file.current_pos,
                 self.remote_file.file_size,
                 reconnect_attempts,
@@ -333,7 +337,7 @@ class BleClient:
                 break
             messager.push_string_message(65, self.remote_file.remote_path)
         if self.remote_file.complete_callback:
-            reason = "Download stopped" if self.client_stop else "BLE reconnect failed after 3 attempts"
+            reason = "Download stopped" if self.client_stop else "No download progress after 3 reconnect attempts"
             self.remote_file.call_complete(reason)
         logging.info("ble client stopped!")
 
