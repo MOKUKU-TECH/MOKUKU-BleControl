@@ -26,11 +26,11 @@ with open(file_path, "r") as file:
             gps_data.append(
                 {
                     "time": int(parts[1]),
-                    "lat": float(parts[2]),
-                    "lng": float(parts[3]),
-                    "alt": float(parts[4]),
-                    "speed": float(parts[5]),
-                    "num_satellites": int(parts[6]),
+                    "lat": float(parts[3]),
+                    "lng": float(parts[4]),
+                    "alt": float(parts[5]),
+                    "speed": float(parts[6]),
+                    "num_satellites": int(parts[7]),
                 }
             )
 
