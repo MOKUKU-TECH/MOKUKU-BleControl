@@ -513,12 +513,16 @@ class BleClient:
                 callback(meme_states)
         elif data[0] == 57:
             callback = self.info_query_callbacks.pop(57, None)
-            if len(data) != 3 or data[1] != 1:
+            if len(data) != 3 or data[1] != 1 or data[2] not in (0, 1, 2):
                 logging.error(f"[SR] invalid wakeword-model response: {list(data)}")
                 if callback:
                     callback(57, False, "Invalid right-eye model response.")
                 return
-            model = "wn10_himokuku" if data[2] else "Other WakeNet model"
+            model = {
+                0: "Other or unavailable model",
+                1: "wn10_himokuku (English MultiNet)",
+                2: "wn10_himokuku (Chinese MultiNet)",
+            }[data[2]]
             logging.info("[SR] right-eye wakeword model: %s", model)
             if callback:
                 callback(57, True, model)

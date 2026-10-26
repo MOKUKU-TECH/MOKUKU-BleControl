@@ -284,8 +284,9 @@ Send this on **Transfer Message** to check whether the right eye runs
 | ---- |
 | `57` |
 
-The device responds on **Transfer Data** as `57, 1, value`: `value = 1` means
-`wn10_himokuku`; `0` means another WakeNet model.
+The device responds on **Transfer Data** as `57, 1, value`: `0` means another
+or unavailable model, `1` means `wn10_himokuku` with English MultiNet, and
+`2` means `wn10_himokuku` with Chinese MultiNet.
 
 # 3. Download File from MOKUKU
 
