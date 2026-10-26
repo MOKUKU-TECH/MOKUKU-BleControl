@@ -2,9 +2,7 @@
 
 import asyncio
 import struct
-import psutil
 import threading
-import time
 import os
 from PyQt5.QtWidgets import (
     QApplication,
@@ -30,20 +28,16 @@ from common.log import logging
 from messager import messager
 
 FILE_BUFFER_SIZE = 128
+FILE_DOWNLOAD_CHUNK_SIZE = 255
 CONFIG_FILE_PATH = "assets/config.txt"
 
 
 class FileTransfer:
-    file_id = 0
-    file_size = 0
-    current_pos = 0
-    file = None
-    complete_callback = None
-
     def __init__(self, file_path=None):
+        self.complete_callback = None
         self.reset()
         if file_path:
-            open_file(file_path)
+            self.open_file(file_path)
 
     def open_file(self, file_path):
         self.file = open(file_path, "rb")
@@ -54,8 +48,17 @@ class FileTransfer:
         self.file_size = 0
         self.current_pos = 0
         self.file = None
+        self.download_path = None
+        self.remote_path = None
+        self.error = None
 
     def set(self, id, size, file_name):
+        if self.file and not self.file.closed:
+            if size != self.file_size:
+                raise ValueError("Remote file size changed during download")
+            self.file_id = id
+            self.file.seek(self.current_pos)
+            return
         self.file_id = id
         self.file_size = size
         self.current_pos = 0
@@ -68,19 +71,37 @@ class FileTransfer:
         return byte_data
 
     def downloadfile_remote_created(self, data):
-        # getting file open response
+        if len(data) != 10 or data[1] != 1:
+            self.call_complete("Invalid file open response")
+            return False
         ptr_value = int.from_bytes(data[2:6], byteorder="little")
         file_size = int.from_bytes(data[6:10], byteorder="little")
         logging.info(
             f"📥 Received file open {data[0]} {data[1]} : 0x{ptr_value:08X} {file_size}"
         )
-        if file_size == 0:
-            logging.error("[FILE] file is Empty")
-            self.call_complete()
+        if ptr_value == 0 or file_size == 0:
+            self.call_complete("Remote file is missing or empty")
             return False
-        self.set(ptr_value, file_size, "data/test.rec")
+        if not self.download_path:
+            self.call_complete("No download destination selected")
+            return False
+        try:
+            self.set(ptr_value, file_size, self.download_path)
+        except (OSError, ValueError) as error:
+            self.call_complete(f"Cannot save file: {error}")
+            return False
+        return True
 
-    def call_complete(self):
+    def call_complete(self, error=None):
+        if self.file and not self.file.closed:
+            try:
+                self.file.close()
+            except OSError as close_error:
+                if error is None:
+                    error = f"Cannot finish saving file: {close_error}"
+        self.error = error
+        if error:
+            logging.error("[FILE] %s", error)
         if self.complete_callback:
             self.complete_callback()
             self.complete_callback = None
@@ -88,8 +109,9 @@ class FileTransfer:
 
     def read_file_data(self, data):
         if self.file is None:
-            logging.error("[FILE] file is None")
-            self.call_complete()
+            return False
+        if len(data) < 6 or len(data) != data[1] + 6:
+            self.call_complete("Invalid file data packet")
             return False
         data_size = data[1]
         start_pos = int.from_bytes(data[2:6], byteorder="little")
@@ -101,15 +123,22 @@ class FileTransfer:
             )
             return True
 
-        # print progress
-
         if data_size > 0:
-            self.file.write(data[6:])
+            if self.current_pos + data_size > self.file_size:
+                self.call_complete("File data exceeds the reported size")
+                return False
+            try:
+                self.file.write(data[6:])
+            except OSError as error:
+                self.call_complete(f"Cannot write file: {error}")
+                return False
             self.current_pos += data_size
-        if data_size < FILE_BUFFER_SIZE:
-            logging.info(f"[FILE] download file transfer complete")
-            self.file.close()
+        if self.current_pos == self.file_size:
+            logging.info("[FILE] download file transfer complete: %s", self.download_path)
             self.call_complete()
+            return False
+        if data_size == 0:
+            self.call_complete(f"Download stopped at {self.current_pos} of {self.file_size} bytes")
             return False
         return True
 
@@ -147,7 +176,6 @@ class FileTransfer:
             messager.push_ack_message(byte_data)
 
             logging.info(f"[FILE] upload file transfer complete")
-            self.file.close()
             self.call_complete()
             return
         self.current_pos += len(chunk)
@@ -185,15 +213,26 @@ class BleClient:
         self.message_label = None
         self.remote_file = FileTransfer()
         self.local_file = FileTransfer()
+        self.last_file_request = None
+        self.file_request_sent_at = 0
+        self.file_request_retries = 0
         self.meme_states_callbacks = []
+        self.info_query_callbacks = {}
 
     def request_meme_states(self, callback):
         self.meme_states_callbacks.append(callback)
         messager.push_meme_states_request()
-        messager.push_himokuku_wakeword_model_request()
+
+    def request_info(self, message_id, callback, value="0"):
+        self.info_query_callbacks[message_id] = callback
+        if message_id == 57:
+            messager.push_himokuku_wakeword_model_request()
+        else:
+            messager.push_string_message(message_id, value)
 
     def stop_client(self):
         self.client_stop = True
+        messager.wake_ack_sender()
 
     def scan_for_device_threading(self, scan_done_event):
         if self.running:
@@ -271,16 +310,47 @@ class BleClient:
                     print(f"          Handle: {descriptor.handle}")
 
     async def connect_to_device(self):
+        self.client_stop = False
+        reconnect_attempts = 0
+        last_progress_position = self.remote_file.current_pos
+        while not self.client_stop:
+            await self.run_connection()
+            self.connected = False
+            if not self.remote_file.complete_callback or self.client_stop:
+                break
+            if self.remote_file.current_pos > last_progress_position:
+                reconnect_attempts = 0
+                last_progress_position = self.remote_file.current_pos
+            if reconnect_attempts == 3:
+                break
+            reconnect_attempts += 1
+            logging.warning(
+                "[FILE] BLE disconnected at %d/%d bytes; reconnecting (attempt %d/3 without progress)",
+                self.remote_file.current_pos,
+                self.remote_file.file_size,
+                reconnect_attempts,
+            )
+            self.last_file_request = None
+            messager.discard_file_read_requests()
+            await asyncio.sleep(2)
+            if self.client_stop:
+                break
+            messager.push_string_message(65, self.remote_file.remote_path)
+        if self.remote_file.complete_callback:
+            reason = "Download stopped" if self.client_stop else "No download progress after 3 reconnect attempts"
+            self.remote_file.call_complete(reason)
+        logging.info("ble client stopped!")
+
+    async def run_connection(self):
         if self.message_label:
             self.message_label.setText(f"Connecting to {self.service_address}...")
         try:
             async with BleakClient(self.service_address) as client:
                 if not client.is_connected:
-                    logging.warning("Failed to connect.")
+                    logging.warning("Failed to connect to %s", self.service_address)
                     return
 
                 logging.info(f"✅ Connected to {self.service_address}!")
-                self.client_stop = False
 
                 if self.message_label:
                     self.message_label.setText(
@@ -318,58 +388,108 @@ class BleClient:
                 logging.info("✅ Ack characteristic found.")
 
                 self.connected = True
-                last_time = time.time()
-                check_interval = 2  # check services every 5 seconds
-                while not self.client_stop:
-                    curr_time = time.time()
-                    if (curr_time - last_time) > check_interval:
-                        services = client.services
-                        last_time = curr_time
+                loop = asyncio.get_running_loop()
+                message_ready = asyncio.Event()
 
-                    if self.send_realtime_data:
+                def wake_sender():
+                    try:
+                        loop.call_soon_threadsafe(message_ready.set)
+                    except RuntimeError:
+                        pass
+
+                messager.set_ack_message_wakeup(wake_sender)
+                next_realtime_send = loop.time()
+                while not self.client_stop:
+                    if not client.is_connected:
+                        break
+                    now = loop.time()
+                    if self.send_realtime_data and now >= next_realtime_send:
                         byte_data = messager.get_message_to_send()
-                        # print("Sent:", [hex(b) for b in byte_data])
                         await client.write_gatt_char(
                             self.CHARACTERISTIC_UUID_MAIN, byte_data
                         )
-                        await asyncio.sleep(0.5)  # 500 ms
+                        next_realtime_send = loop.time() + 0.5
 
                     if self.client_stop:
                         break
 
+                    message_ready.clear()
                     message_to_send = messager.pop_ack_message_to_send()
-                    if message_to_send is None:
-                        await asyncio.sleep(0.1)  # 100 ms
-                    else:
+                    if message_to_send is not None:
+                        if message_to_send[0] == 66:
+                            self.last_file_request = message_to_send
+                            self.file_request_sent_at = loop.time()
                         await client.write_gatt_char(
-                            self.CHARACTERISTIC_UUID_ACK, message_to_send
+                            self.CHARACTERISTIC_UUID_ACK,
+                            message_to_send,
+                            response=True,
                         )
-                        # await asyncio.sleep(0.1)  # 100 ms
+                        continue
 
-                logging.info("Process End!")
+                    now = loop.time()
+                    if self.last_file_request and self.remote_file.file:
+                        remaining = 5 - (now - self.file_request_sent_at)
+                        if remaining <= 0:
+                            if self.file_request_retries == 3:
+                                self.last_file_request = None
+                                self.remote_file.call_complete("No file data received after 3 retries")
+                            else:
+                                self.file_request_retries += 1
+                                self.file_request_sent_at = now
+                                await client.write_gatt_char(
+                                    self.CHARACTERISTIC_UUID_ACK,
+                                    self.last_file_request,
+                                    response=True,
+                                )
+                            continue
+                    else:
+                        remaining = None
+
+                    if self.send_realtime_data:
+                        realtime_wait = max(0, next_realtime_send - now)
+                        remaining = min(remaining, realtime_wait) if remaining is not None else realtime_wait
+                    remaining = min(remaining, 1.0) if remaining is not None else 1.0
+                    try:
+                        await asyncio.wait_for(message_ready.wait(), timeout=remaining)
+                    except asyncio.TimeoutError:
+                        pass
+
+                logging.info(
+                    "BLE session ended: %s at file byte %d/%d",
+                    "app stopped" if self.client_stop else "link disconnected",
+                    self.remote_file.current_pos,
+                    self.remote_file.file_size,
+                )
         except BleakError as e:
             if self.message_label:
                 self.message_label.setText(f"BLE Error: {str(e)}")
             logging.error(f"BLE Error: {str(e)}")
+        finally:
+            messager.set_ack_message_wakeup(None)
             self.connected = False
-        logging.info("ble client stopped!")
 
     def require_file_data(self):
         # id(=66), buffer_size, file_id, begin
         byte_data = []
         byte_data.extend(struct.pack("<B", 66))  # first byte for message type ID
-        byte_data.extend(struct.pack("<B", FILE_BUFFER_SIZE))
+        byte_data.extend(struct.pack("<B", FILE_DOWNLOAD_CHUNK_SIZE))
         byte_data.extend(struct.pack("<I", self.remote_file.file_id))
         byte_data.extend(struct.pack("<I", self.remote_file.current_pos))
         messager.push_ack_message(byte_data)
 
     # This callback is called every time ESP32 sends a notification
     def notification_handler(self, sender: int, data: bytearray):
+        if not data:
+            logging.error("[BLE] empty notification")
+            return
         if data[0] == 65:
-            # getting file open response
-            self.remote_file.downloadfile_remote_created(data)
-            self.require_file_data()
+            self.last_file_request = None
+            self.file_request_retries = 0
+            if self.remote_file.downloadfile_remote_created(data):
+                self.require_file_data()
         elif data[0] == 66:
+            self.last_file_request = None
+            self.file_request_retries = 0
             if self.remote_file.read_file_data(data):
                 self.require_file_data()
         elif data[0] == 63:
@@ -392,18 +512,30 @@ class BleClient:
             for callback in callbacks:
                 callback(meme_states)
         elif data[0] == 57:
+            callback = self.info_query_callbacks.pop(57, None)
             if len(data) != 3 or data[1] != 1:
                 logging.error(f"[SR] invalid wakeword-model response: {list(data)}")
+                if callback:
+                    callback(57, False, "Invalid right-eye model response.")
                 return
-            logging.info(
-                "[SR] right-eye wakeword model: %s",
-                "wn10_himokuku" if data[2] else "other",
-            )
+            model = "wn10_himokuku" if data[2] else "Other WakeNet model"
+            logging.info("[SR] right-eye wakeword model: %s", model)
+            if callback:
+                callback(57, True, model)
         else:
-            data_str = bytes.fromhex(data[2:].hex()).decode("utf-8")
+            if len(data) < 2:
+                logging.error("[BLE] incomplete notification: %s", list(data))
+                callback = self.info_query_callbacks.pop(data[0], None)
+                if callback:
+                    callback(data[0], False, "Incomplete device response.")
+                return
+            data_str = bytes(data[2:]).decode("utf-8", errors="replace")
             logging.info(
                 f"📥 Received {len(data)}, id: {data[0]}, ret: {data[1]}, data: {data_str}"
             )
+            callback = self.info_query_callbacks.pop(data[0], None)
+            if callback:
+                callback(data[0], data[1] == 1, data_str)
 
 
 class BleQtWidget:

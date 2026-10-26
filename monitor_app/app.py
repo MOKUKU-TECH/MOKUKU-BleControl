@@ -21,11 +21,14 @@ from PyQt5.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
     QDialog,
+    QTextEdit,
     QTableWidget,
     QTableWidgetItem,
     QTabWidget,
+    QFileDialog,
+    QScrollArea,
 )
-from PyQt5.QtCore import Qt, Q_ARG, QMetaObject, pyqtSignal
+from PyQt5.QtCore import Qt, Q_ARG, QMetaObject, QTimer, pyqtSignal
 from PyQt5.QtGui import QIntValidator, QDoubleValidator
 
 import theme
@@ -49,6 +52,15 @@ APP_TAG_NAMES = {
     5: "不可编辑",
     6: "Festival",
 }
+INFO_QUERY_TITLES = {
+    60: "Files in /sd/record",
+    61: "SD Card Info",
+    3: "Firmware Version",
+    4: "MAC Address",
+    5: "Meme Version",
+    57: "Right-eye Model",
+}
+RECORD_DIRECTORY = "/sd/record"
 
 
 def create_command_table(widget):
@@ -212,13 +224,174 @@ class MemeTestPanel(QDialog):
         tag_enabled_box.blockSignals(False)
 
 
+class InfoQueriesPanel(QDialog):
+    info_query_received = pyqtSignal(int, bool, str)
+    download_requested = pyqtSignal(str)
+
+    def __init__(self, ble_client, parent=None):
+        super().__init__(parent)
+        self.ble_client = ble_client
+        self.info_query_received.connect(self.display_info_query, Qt.QueuedConnection)
+        self.setWindowTitle("BleClient Info Queries")
+        self.resize(460, 560)
+
+        layout = QVBoxLayout(self)
+        self.results_text = QTextEdit(self)
+        self.results_text.setReadOnly(True)
+        self.results_text.setPlainText("Select a query to see its result.")
+        layout.addWidget(self.results_text)
+
+        self.record_files_area = QScrollArea(self)
+        self.record_files_area.setWidgetResizable(True)
+        self.record_files_area.setMaximumHeight(180)
+        self.record_files_widget = QWidget(self.record_files_area)
+        self.record_files_layout = QVBoxLayout(self.record_files_widget)
+        self.record_files_area.setWidget(self.record_files_widget)
+        self.record_files_area.hide()
+        layout.addWidget(self.record_files_area)
+        self.record_file_names = []
+        self.clearing_record_files = False
+        self.clear_batch_names = set()
+        self.clear_timeout = QTimer(self)
+        self.clear_timeout.setSingleShot(True)
+        self.clear_timeout.timeout.connect(
+            lambda: self.finish_clearing_record_files("No response while checking which recordings remain.")
+        )
+        self.query_buttons = []
+
+        for message_id, title in INFO_QUERY_TITLES.items():
+            button = QPushButton(title, self)
+            button.clicked.connect(
+                lambda checked=False, query_id=message_id: self.request_info(query_id)
+            )
+            self.query_buttons.append(button)
+            if message_id == 60:
+                record_controls = QHBoxLayout()
+                record_controls.addWidget(button)
+                self.clear_recordings_button = QPushButton("Clear recordings", self)
+                self.clear_recordings_button.setEnabled(False)
+                self.clear_recordings_button.clicked.connect(self.clear_record_files)
+                record_controls.addWidget(self.clear_recordings_button)
+                layout.addLayout(record_controls)
+            else:
+                layout.addWidget(button)
+
+    def request_info(self, message_id):
+        if not self.ble_client.connected:
+            self.results_text.setPlainText("Connect to MOKUKU over BLE first.")
+            return
+        self.results_text.setPlainText(f"Requesting {INFO_QUERY_TITLES[message_id]}...")
+        self.show_record_files([])
+        value = RECORD_DIRECTORY if message_id == 60 else "0"
+        self.ble_client.request_info(message_id, self.info_query_received.emit, value)
+
+    def show_record_files(self, names):
+        self.record_file_names = names
+        while self.record_files_layout.count():
+            item = self.record_files_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        for name in names:
+            row = QWidget(self.record_files_widget)
+            row_layout = QHBoxLayout(row)
+            row_layout.setContentsMargins(0, 0, 0, 0)
+            row_layout.addWidget(QLabel(name, row), 1)
+            button = QPushButton("Download", row)
+            button.clicked.connect(
+                lambda checked=False, file_name=name: self.download_requested.emit(
+                    f"{RECORD_DIRECTORY}/{file_name}"
+                )
+            )
+            button.setEnabled(not self.clearing_record_files)
+            row_layout.addWidget(button)
+            self.record_files_layout.addWidget(row)
+        self.record_files_area.setVisible(bool(names))
+        self.clear_recordings_button.setEnabled(bool(names) and not self.clearing_record_files)
+
+    def clear_record_files(self):
+        if not self.record_file_names or not self.ble_client.connected:
+            return
+        count = len(self.record_file_names)
+        answer = QMessageBox.question(
+            self,
+            "Clear recordings",
+            f"Delete all files in {RECORD_DIRECTORY}?\n{count} file(s) are currently listed. This cannot be undone.",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if answer != QMessageBox.Yes:
+            return
+        self.clearing_record_files = True
+        names = self.record_file_names
+        self.show_record_files([])
+        for button in self.query_buttons:
+            button.setEnabled(False)
+        self.delete_record_file_batch(names)
+
+    def delete_record_file_batch(self, names):
+        self.clear_batch_names = set(names)
+        self.results_text.setPlainText(f"Clearing files in {RECORD_DIRECTORY}...")
+        for name in names:
+            messager.push_string_message(62, f"{RECORD_DIRECTORY}/{name}")
+        self.ble_client.request_info(60, self.info_query_received.emit, RECORD_DIRECTORY)
+        self.clear_timeout.start(30000)
+
+    def finish_clearing_record_files(self, message):
+        self.clear_timeout.stop()
+        self.clearing_record_files = False
+        self.clear_batch_names.clear()
+        self.show_record_files(self.record_file_names)
+        for button in self.query_buttons:
+            button.setEnabled(True)
+        self.results_text.setPlainText(message)
+
+    def display_info_query(self, message_id, success, result):
+        title = INFO_QUERY_TITLES[message_id]
+        if not success:
+            if message_id == 60:
+                self.show_record_files([])
+                if self.clearing_record_files:
+                    self.finish_clearing_record_files("Could not verify which recordings remain.")
+                    return
+            self.results_text.setPlainText(
+                f"{title}\n{result or 'The device could not complete this query.'}"
+            )
+            return
+        if message_id == 60:
+            names = [name for name in result.split(",") if name]
+            self.show_record_files(names)
+            if self.clearing_record_files:
+                self.clear_timeout.stop()
+                if not names:
+                    self.finish_clearing_record_files("All recordings were cleared.")
+                elif self.clear_batch_names.issubset(names):
+                    self.finish_clearing_record_files(
+                        f"Some files could not be deleted. {len(names)} file(s) remain."
+                    )
+                else:
+                    self.delete_record_file_batch(names)
+                return
+            result = f"{len(names)} file(s)" if names else "No files returned."
+        elif message_id == 61:
+            sizes = result.split("/", 1)
+            if len(sizes) == 2:
+                result = f"Free: {sizes[0]} MB\nTotal: {sizes[1]} MB"
+        elif message_id in (3, 5):
+            versions = result.split("/", 1)
+            if len(versions) == 2:
+                result = f"INS eye: {versions[0]}\nAI eye: {versions[1]}"
+        self.results_text.setPlainText(f"{title}\n{result or 'No data returned.'}")
+
+
 class SimpleWindow(QWidget):
+    download_finished = pyqtSignal(bool, str)
     width = 800
     height = 600
     line_height = 30
 
     def __init__(self):
         super().__init__()
+        self.download_finished.connect(self.finish_download)
         self.initialize_ui()
         logging.info(" app started")
 
@@ -314,31 +487,13 @@ class SimpleWindow(QWidget):
         layout.addWidget(self.cmd_table)
         layout.addLayout(layout_cmd)
 
-        test_label = theme.section_label("Info Queries")
-        test_label.setFixedSize(self.width, self.line_height)
-        layout.addWidget(test_label)
-
-        self.list_directory_button = QPushButton("List /sd/record", self)
-        self.list_directory_button.clicked.connect(self.test_list_directory)
-        self.sd_info_button = QPushButton("SD Card Info", self)
-        self.sd_info_button.clicked.connect(self.test_sd_info)
-        self.firmware_version_button = QPushButton("Firmware Version", self)
-        self.firmware_version_button.clicked.connect(self.test_firmware_version)
-        self.mac_address_button = QPushButton("MAC Address", self)
-        self.mac_address_button.clicked.connect(self.test_mac_address)
-        self.meme_version_button = QPushButton("Meme Version", self)
-        self.meme_version_button.clicked.connect(self.test_meme_version)
-        layout_test = QHBoxLayout()
-        layout_test.addWidget(self.list_directory_button)
-        layout_test.addWidget(self.sd_info_button)
-        layout_test.addWidget(self.firmware_version_button)
-        layout_test.addWidget(self.mac_address_button)
-        layout_test.addWidget(self.meme_version_button)
-        layout.addLayout(layout_test)
+        self.info_queries_button = QPushButton("Info Queries", self)
+        self.info_queries_button.clicked.connect(self.open_info_queries_panel)
+        layout.addWidget(self.info_queries_button)
 
         # command layout
         self.download_input_box = QLineEdit(self)
-        self.download_input_box.setText("/sd/record")
+        self.download_input_box.setText(RECORD_DIRECTORY)
         self.download_button = QPushButton("Download File", self)
         self.download_button.clicked.connect(self.start_downloading_file)
         layout_download = QHBoxLayout()
@@ -377,46 +532,53 @@ class SimpleWindow(QWidget):
 
         self.setLayout(layout)
 
-    def test_list_directory(self):
-        messager.push_string_message(60, "/sd/record")
-
-    def test_sd_info(self):
-        messager.push_string_message(61, "0")
-
-    def test_firmware_version(self):
-        messager.push_string_message(3, "0")
-
-    def test_mac_address(self):
-        messager.push_string_message(4, "0")
-
-    def test_meme_version(self):
-        messager.push_string_message(5, "0")
+    def open_info_queries_panel(self):
+        if not hasattr(self, "info_queries_panel"):
+            self.info_queries_panel = InfoQueriesPanel(ble_client_widget.ble_client, self)
+            self.info_queries_panel.download_requested.connect(self.download_file)
+        self.info_queries_panel.show()
+        self.info_queries_panel.raise_()
 
     def download_complete_callback(self):
+        transfer = ble_client_widget.ble_client.remote_file
+        self.download_finished.emit(transfer.error is None, transfer.error or transfer.download_path)
+
+    def finish_download(self, successful, result):
         if self.downloading_dialog:
             self.downloading_dialog.close()
-        self.download_button.setEnabled(True)  # Re-enable button
+            self.downloading_dialog = None
+        self.download_button.setEnabled(True)
+        if successful:
+            QMessageBox.information(self, "Download complete", f"Saved to {result}")
+        else:
+            QMessageBox.warning(self, "Download failed", result)
 
     def start_downloading_file(self):
-        if len(self.download_input_box.text()) == 0:
-            return
-        download_file = self.download_input_box.text().strip()
-        logging.info("start to download " + download_file)
+        self.download_file(self.download_input_box.text().strip())
 
-        if not ble_client_widget.ble_client.connected:
+    def download_file(self, download_file):
+        if not download_file or not ble_client_widget.ble_client.connected:
             return
-        # 1. Create and show custom loading dialog
-        self.downloading_dialog = DownloadingDialog(self, title="Downloading")
-        self.downloading_dialog.file_transfer = ble_client_widget.ble_client.remote_file
-        self.downloading_dialog.show()
-        # 2. Disable UI elements during scan
-        self.download_button.setEnabled(False)
-
-        # 3. Run scan asynchronously (non-blocking)
-        messager.push_string_message(65, download_file)
-        ble_client_widget.ble_client.remote_file.complete_callback = (
-            self.download_complete_callback
+        default_path = Path.home() / "Downloads"
+        if not default_path.is_dir():
+            default_path = Path.home()
+        file_name = Path(download_file).name
+        save_path, _ = QFileDialog.getSaveFileName(
+            self, "Save MOKUKU recording", str(default_path / file_name)
         )
+        if not save_path:
+            return
+        logging.info("start to download %s to %s", download_file, save_path)
+
+        self.downloading_dialog = DownloadingDialog(self, title="Downloading")
+        transfer = ble_client_widget.ble_client.remote_file
+        self.downloading_dialog.file_transfer = transfer
+        self.downloading_dialog.show()
+        self.download_button.setEnabled(False)
+        transfer.download_path = save_path
+        transfer.remote_path = download_file
+        transfer.complete_callback = self.download_complete_callback
+        messager.push_string_message(65, download_file)
 
     def upload_complete_callback(self):
         if self.uploading_dialog:

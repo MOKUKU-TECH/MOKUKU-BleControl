@@ -1,6 +1,5 @@
 # Copyright 2026 MOKUKU Inc. All rights reserved.
 
-import asyncio
 import struct
 import threading
 import time
@@ -25,6 +24,7 @@ class MokukuMessager:
     def __init__(self):
         self.ack_message_lock = threading.Lock()
         self.ack_message_queue = deque()
+        self.ack_message_wakeup = None
         # self.command_lock = threading.Lock()
         # self.command_queue = deque()
         self.tag = "[messager]"
@@ -81,6 +81,28 @@ class MokukuMessager:
         with self.ack_message_lock:
             # push message to the queue
             self.ack_message_queue.append(message)
+            wakeup = self.ack_message_wakeup
+        if wakeup:
+            wakeup()
+
+    def set_ack_message_wakeup(self, wakeup):
+        with self.ack_message_lock:
+            self.ack_message_wakeup = wakeup
+            has_messages = bool(self.ack_message_queue)
+        if wakeup and has_messages:
+            wakeup()
+
+    def wake_ack_sender(self):
+        with self.ack_message_lock:
+            wakeup = self.ack_message_wakeup
+        if wakeup:
+            wakeup()
+
+    def discard_file_read_requests(self):
+        with self.ack_message_lock:
+            self.ack_message_queue = deque(
+                message for message in self.ack_message_queue if message[0] != 66
+            )
 
     """
     1. Wifi Name :
