@@ -1,0 +1,53 @@
+# MOKUKU II Monitor
+
+Desktop and command-line clients for MOKUKU II (one ESP32-S31). MOKUKU II speaks a new
+protocol, so it needs this app instead of `monitor_app`:
+
+- one Transfer Message characteristic (`d222e154-…`) carries every message and its replies;
+- byte 0 is the message type: `1` data, `2` set, `3` get;
+- set and get name a property, and replies carry a result code.
+
+The protocol reference is `doc/MOKUKU_II_BLE_CONTROL.md` in the MobiliMOKUKU repository;
+`protocol.py` mirrors it.
+
+| File | Contents |
+|---|---|
+| `protocol.py` | Message types, properties, results, encoders and decoders |
+| `ble_client.py` | Bleak client: scan for `mokukuii*`, connect, one request at a time |
+| `app.py` | PyQt5 window |
+| `cli.py` | Command-line client |
+
+## Setup
+
+Uses the same environment as `monitor_app` (Bleak and PyQt5):
+
+```
+conda env create -f monitor_app/ble_ctrl_env.yaml
+conda activate ble_ctrl
+```
+
+## Desktop app
+
+```
+python monitor_app_II/app.py
+```
+
+Scan, pick a `mokukuii*` device, and connect. The app then reads the MOKUKU version, MAC address,
+SD card space, and settings. Settings (Wi-Fi name and password, remote address, OBD scanning)
+each have **Get** and **Set**. **Send** writes one dashboard data packet; **Reboot** sends the
+reboot command.
+
+## Command line
+
+```
+python monitor_app_II/cli.py scan
+python monitor_app_II/cli.py get version mac_address sd_card
+python monitor_app_II/cli.py set wifi_name Home
+python monitor_app_II/cli.py set obd_enabled off
+python monitor_app_II/cli.py data 60 2400 75 --command none
+```
+
+Without `--address`, the CLI connects to the strongest `mokukuii*` device.
+
+A reply too long for one notification (long strings at the default MTU) is read from the
+characteristic instead; the client does this after a 3 s timeout.
