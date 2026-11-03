@@ -14,7 +14,7 @@ The protocol reference is `doc/MOKUKU_II_BLE_CONTROL.md` in the MobiliMOKUKU rep
 |---|---|
 | `protocol.py` | Message types, properties, results, encoders and decoders |
 | `ble_client.py` | Bleak client: scan for `mokukuii*`, connect, one request at a time |
-| `app.py` | PyQt5 window |
+| `app.py` | PyQt5 window, styled with `monitor_app/theme.py` |
 | `cli.py` | Command-line client |
 
 ## Setup

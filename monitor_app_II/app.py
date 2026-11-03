@@ -3,27 +3,33 @@
 """MOKUKU II monitor: scan, connect, read device info, edit settings, and send dashboard data."""
 import sys
 import time
+from pathlib import Path
 
-from PyQt5.QtCore import pyqtSignal
+from PyQt5.QtCore import Qt, pyqtSignal
+from PyQt5.QtGui import QIntValidator
 from PyQt5.QtWidgets import (
     QApplication,
     QCheckBox,
-    QComboBox,
     QFormLayout,
-    QGroupBox,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QPushButton,
-    QSpinBox,
     QTextEdit,
     QVBoxLayout,
     QWidget,
 )
 
-import protocol
-from ble_client import MokukuIIClient
-from protocol import Command, Property, Result
+# The look is shared with monitor_app; appended so local modules (ble_client) win.
+sys.path.append(str(Path(__file__).resolve().parent.parent / "monitor_app"))
+import theme  # noqa: E402
+
+import protocol  # noqa: E402
+from ble_client import MokukuIIClient  # noqa: E402
+from protocol import Command, Property, Result  # noqa: E402
 
 INFO_LABELS = {
     Property.VERSION: "MOKUKU version",
@@ -35,6 +41,8 @@ TEXT_SETTING_LABELS = {
     Property.WIFI_PASSWORD: "Wi-Fi password",
     Property.REMOTE_ADDRESS: "Remote address",
 }
+# (label, maximum, default)
+DATA_FIELDS = (("Speed km/h", 255, 60), ("RPM", 16383, 2400), ("Fuel %", 100, 75))
 
 
 class MonitorWindow(QWidget):
@@ -46,50 +54,77 @@ class MonitorWindow(QWidget):
         super().__init__()
         self.client = MokukuIIClient(on_disconnect=self.device_disconnected.emit)
         self.request_finished.connect(self.finish_request)
-        self.device_disconnected.connect(lambda: self.set_connected(False, "disconnected"))
-        self.setWindowTitle("MOKUKU II Monitor")
-        self.resize(560, 720)
+        self.device_disconnected.connect(lambda: self.set_connected(False))
         self.connected_widgets = []
 
+        self.setWindowTitle("MOKUKU II Monitor")
+        self.setGeometry(300, 300, 520, 780)
         layout = QVBoxLayout(self)
-        layout.addLayout(self.create_connection_row())
-        layout.addWidget(self.create_info_group())
-        layout.addWidget(self.create_settings_group())
-        layout.addWidget(self.create_data_group())
+        layout.setContentsMargins(18, 18, 18, 12)
+        layout.setSpacing(8)
+        self.add_device_section(layout)
+        layout.addWidget(self.horizontal_line())
+        self.add_info_section(layout)
+        layout.addWidget(self.horizontal_line())
+        self.add_settings_section(layout)
+        layout.addWidget(self.horizontal_line())
+        self.add_data_section(layout)
+        layout.addWidget(self.horizontal_line())
+        layout.addWidget(theme.section_label("Activity Log"))
         self.log_view = QTextEdit(readOnly=True)
+        self.log_view.setFont(theme.monospace_font(9))
         layout.addWidget(self.log_view, stretch=1)
-        self.set_connected(False, "disconnected")
+        self.set_connected(False)
 
-    def create_connection_row(self):
+    @staticmethod
+    def horizontal_line():
+        line = QFrame()
+        line.setFrameShape(QFrame.HLine)
+        line.setFixedHeight(1)
+        line.setStyleSheet(f"background: {theme.BORDER}; border: none;")
+        return line
+
+    def add_device_section(self, layout):
+        layout.addWidget(theme.section_label("MOKUKU II Device"))
+        self.status_label = QLabel()
+        layout.addWidget(self.status_label)
+        self.device_list = QListWidget()
+        self.device_list.setFixedHeight(80)
+        self.device_list.setFont(theme.monospace_font())
+        layout.addWidget(self.device_list)
+
         row = QHBoxLayout()
         self.scan_button = QPushButton("Scan")
         self.scan_button.clicked.connect(self.scan)
-        self.device_box = QComboBox()
-        self.device_box.setMinimumWidth(220)
         self.connect_button = QPushButton("Connect")
-        self.connect_button.clicked.connect(self.toggle_connection)
-        self.status_label = QLabel()
-        for widget in (self.scan_button, self.device_box, self.connect_button, self.status_label):
-            row.addWidget(widget)
-        row.addStretch()
-        return row
+        self.connect_button.setProperty("accent", True)
+        self.connect_button.clicked.connect(self.connect_device)
+        self.disconnect_button = QPushButton("Disconnect")
+        self.disconnect_button.clicked.connect(self.disconnect_device)
+        for button in (self.scan_button, self.connect_button, self.disconnect_button):
+            row.addWidget(button)
+        layout.addLayout(row)
 
-    def create_info_group(self):
-        group = QGroupBox("Device")
-        form = QFormLayout(group)
+    def add_info_section(self, layout):
+        layout.addWidget(theme.section_label("Device Info"))
+        form = QFormLayout()
         self.info_labels = {}
         for property, label in INFO_LABELS.items():
-            self.info_labels[property] = QLabel("-")
-            form.addRow(label, self.info_labels[property])
+            value_label = QLabel("-")
+            value_label.setFont(theme.monospace_font())
+            value_label.setStyleSheet(f"color: {theme.TEXT_SECONDARY};")
+            value_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+            self.info_labels[property] = value_label
+            form.addRow(theme.hint_label(label), value_label)
+        layout.addLayout(form)
         refresh_button = QPushButton("Refresh")
         refresh_button.clicked.connect(self.refresh_info)
-        form.addRow(refresh_button)
+        layout.addWidget(refresh_button)
         self.connected_widgets.append(refresh_button)
-        return group
 
-    def create_settings_group(self):
-        group = QGroupBox("Settings")
-        form = QFormLayout(group)
+    def add_settings_section(self, layout):
+        layout.addWidget(theme.section_label("Settings"))
+        form = QFormLayout()
         self.setting_fields = {}
         for property, label in TEXT_SETTING_LABELS.items():
             field = QLineEdit()
@@ -97,45 +132,41 @@ class MonitorWindow(QWidget):
             if property == Property.WIFI_PASSWORD:
                 field.setEchoMode(QLineEdit.Password)
             self.setting_fields[property] = field
-            form.addRow(label, self.create_setting_row(property, field))
+            form.addRow(theme.hint_label(label), self.setting_row(property, field))
         self.obd_box = QCheckBox("OBD scanning")
-        form.addRow("OBD", self.create_setting_row(Property.OBD_ENABLED, self.obd_box))
-        return group
+        form.addRow(theme.hint_label("OBD"), self.setting_row(Property.OBD_ENABLED, self.obd_box))
+        layout.addLayout(form)
 
-    def create_setting_row(self, property, field):
+    def setting_row(self, property, field):
         row = QHBoxLayout()
         row.addWidget(field, stretch=1)
-        get_button = QPushButton("Get")
-        get_button.clicked.connect(lambda: self.get_setting(property))
-        set_button = QPushButton("Set")
-        set_button.clicked.connect(lambda: self.set_setting(property))
-        row.addWidget(get_button)
-        row.addWidget(set_button)
-        self.connected_widgets += [get_button, set_button]
+        for text, handler in (("Get", self.get_setting), ("Set", self.set_setting)):
+            button = QPushButton(text)
+            button.clicked.connect(lambda _, handler=handler: handler(property))
+            row.addWidget(button)
+            self.connected_widgets.append(button)
         return row
 
-    def create_data_group(self):
-        group = QGroupBox("Dashboard data")
-        row = QHBoxLayout(group)
-        self.speed_box = self.create_spin_box(0, 255, 60, " km/h")
-        self.rpm_box = self.create_spin_box(0, 16383, 2400, " rpm")
-        self.fuel_box = self.create_spin_box(0, 100, 75, " %")
-        send_button = QPushButton("Send")
+    def add_data_section(self, layout):
+        layout.addWidget(theme.section_label("Dashboard Data"))
+        row = QHBoxLayout()
+        self.data_fields = []
+        for label, maximum, default in DATA_FIELDS:
+            field = QLineEdit(str(default))
+            field.setValidator(QIntValidator(0, maximum))
+            row.addWidget(theme.hint_label(label))
+            row.addWidget(field)
+            self.data_fields.append(field)
+        layout.addLayout(row)
+        button_row = QHBoxLayout()
+        send_button = QPushButton("Send Data")
         send_button.clicked.connect(lambda: self.send_data(Command.NONE))
         reboot_button = QPushButton("Reboot")
         reboot_button.clicked.connect(lambda: self.send_data(Command.REBOOT))
-        for widget in (self.speed_box, self.rpm_box, self.fuel_box, send_button, reboot_button):
-            row.addWidget(widget)
+        button_row.addWidget(send_button)
+        button_row.addWidget(reboot_button)
+        layout.addLayout(button_row)
         self.connected_widgets += [send_button, reboot_button]
-        return group
-
-    @staticmethod
-    def create_spin_box(minimum, maximum, value, suffix):
-        box = QSpinBox()
-        box.setRange(minimum, maximum)
-        box.setValue(value)
-        box.setSuffix(suffix)
-        return box
 
     def log(self, text):
         self.log_view.append(f"{time.strftime('%H:%M:%S')}  {text}")
@@ -149,48 +180,61 @@ class MonitorWindow(QWidget):
         if error:
             self.log(f"error: {error}")
             if not self.client.connected:
-                self.set_connected(False, "disconnected")
+                self.set_connected(False)
         elif on_success:
             on_success(future.result())
 
-    def set_connected(self, connected, status):
-        self.connect_button.setText("Disconnect" if connected else "Connect")
-        self.status_label.setText(status)
+    def set_status(self, state, text):
+        color = theme.CONNECTION_COLORS.get(state, theme.TEXT_FAINT)
+        self.status_label.setText(f"● {text}")
+        self.status_label.setStyleSheet(f"color: {color}; font-size: 14px;")
+
+    def set_connected(self, connected, name=""):
+        self.set_status("connected" if connected else "disconnected",
+                        f"Connected to {name}" if connected else "Disconnected")
+        self.scan_button.setEnabled(not connected)
+        self.connect_button.setEnabled(not connected)
+        self.disconnect_button.setEnabled(connected)
         for widget in self.connected_widgets:
             widget.setEnabled(connected)
 
     def scan(self):
         self.scan_button.setEnabled(False)
-        self.status_label.setText("scanning…")
+        self.set_status("scanning", "Scanning…")
 
         def show_devices(devices):
             self.scan_button.setEnabled(True)
-            self.device_box.clear()
+            self.device_list.clear()
             for device in devices:
-                self.device_box.addItem(f"{device.name}  {device.rssi} dBm", device.address)
-            self.status_label.setText(f"{len(devices)} found")
+                item = QListWidgetItem(f"{device.name}   {device.address}   {device.rssi} dBm")
+                item.setData(Qt.UserRole, device)
+                self.device_list.addItem(item)
+            if devices:
+                self.device_list.setCurrentRow(0)
+            self.set_status("disconnected", f"{len(devices)} found")
 
         self.run(self.client.scan(), show_devices)
 
-    def toggle_connection(self):
-        if self.client.connected:
-            self.run(self.client.disconnect(),
-                     lambda _: self.set_connected(False, "disconnected"))
-            return
-        address = self.device_box.currentData()
-        if not address:
+    def connect_device(self):
+        item = self.device_list.currentItem()
+        if item is None:
             self.log("scan and pick a device first")
             return
-        self.status_label.setText("connecting…")
+        device = item.data(Qt.UserRole)
+        self.connect_button.setEnabled(False)
+        self.set_status("connecting", f"Connecting to {device.name}…")
 
         def connected(_):
-            self.set_connected(True, "connected")
-            self.log(f"connected to {self.device_box.currentText().split()[0]}")
+            self.set_connected(True, device.name)
+            self.log(f"connected to {device.name}")
             self.refresh_info()
             for property in (*TEXT_SETTING_LABELS, Property.OBD_ENABLED):
                 self.get_setting(property)
 
-        self.run(self.client.connect(address), connected)
+        self.run(self.client.connect(device.address), connected)
+
+    def disconnect_device(self):
+        self.run(self.client.disconnect(), lambda _: self.set_connected(False))
 
     def refresh_info(self):
         for property in INFO_LABELS:
@@ -230,8 +274,8 @@ class MonitorWindow(QWidget):
                                         f"{protocol.describe_result(reply.result)}"))
 
     def send_data(self, command):
-        self.run(self.client.send_data(self.speed_box.value(), self.rpm_box.value(),
-                                       self.fuel_box.value(), command),
+        speed_kmh, rpm, fuel_percent = (int(field.text() or 0) for field in self.data_fields)
+        self.run(self.client.send_data(speed_kmh, rpm, fuel_percent, command),
                  lambda _: self.log(f"data sent ({command.name.lower()})"))
 
     def closeEvent(self, event):
@@ -242,6 +286,7 @@ class MonitorWindow(QWidget):
 
 def main():
     application = QApplication(sys.argv)
+    application.setStyleSheet(theme.APP_STYLESHEET)
     window = MonitorWindow()
     window.show()
     return application.exec_()
