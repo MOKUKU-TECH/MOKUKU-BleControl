@@ -35,6 +35,8 @@ INFO_LABELS = {
     Property.VERSION: "MOKUKU version",
     Property.MAC_ADDRESS: "MAC address",
     Property.SD_CARD: "SD card",
+    Property.WAKE_WORD_MODEL: "Wake word",
+    Property.MULTINET_LANGUAGE: "Command language",
 }
 TEXT_SETTING_LABELS = {
     Property.WIFI_NAME: "Wi-Fi name",

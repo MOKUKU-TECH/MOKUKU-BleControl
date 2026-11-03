@@ -61,6 +61,12 @@ def main() -> int:
     data_parser.add_argument("fuel_percent", type=int)
     data_parser.add_argument("--command", choices=[c.name.lower() for c in Command], default="none")
     arguments = parser.parse_args()
+    if arguments.action == "set":
+        try:
+            protocol.encode_set(arguments.property,
+                                parse_set_value(arguments.property, arguments.value))
+        except ValueError as error:
+            parser.error(str(error))
 
     client = MokukuIIClient()
     run = lambda coroutine: client.submit(coroutine).result()

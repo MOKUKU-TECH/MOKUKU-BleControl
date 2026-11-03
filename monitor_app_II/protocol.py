@@ -27,6 +27,8 @@ class Property(IntEnum):
     REMOTE_ADDRESS = 5
     OBD_ENABLED = 6
     SD_CARD = 7
+    WAKE_WORD_MODEL = 8
+    MULTINET_LANGUAGE = 9
 
 
 class Result(IntEnum):
@@ -44,7 +46,6 @@ class Command(IntEnum):
     DISABLE_OBD = 35
 
 
-READ_ONLY_PROPERTIES = (Property.VERSION, Property.MAC_ADDRESS, Property.SD_CARD)
 STRING_PROPERTIES = (Property.WIFI_NAME, Property.WIFI_PASSWORD, Property.REMOTE_ADDRESS)
 
 
@@ -94,6 +95,9 @@ def describe_value(property: int, value: bytes) -> str:
     if property == Property.SD_CARD and len(value) == 8:
         total_megabytes, free_megabytes = struct.unpack("<II", value)
         return f"{total_megabytes} MB, {free_megabytes} MB free"
+    if property == Property.MULTINET_LANGUAGE:
+        language = value.decode("utf-8", "replace")
+        return {"cn": "Mandarin (cn)", "en": "English (en)"}.get(language, language)
     return value.decode("utf-8", errors="replace")
 
 

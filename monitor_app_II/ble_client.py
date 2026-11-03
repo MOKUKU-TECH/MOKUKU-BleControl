@@ -49,15 +49,22 @@ class MokukuIIClient:
 
     async def connect(self, address: str) -> None:
         await self.disconnect()
+        # Published as self.client only once set up, so a drop mid-connect cannot clear it.
+        client = BleakClient(address, disconnected_callback=self.handle_disconnect)
+        await client.connect()
+        try:
+            # Catches a MOKUKU (S3) eye's address: its Transfer Message has no notify.
+            characteristic = client.services.get_characteristic(protocol.MESSAGE_UUID)
+            if characteristic is None or "notify" not in characteristic.properties:
+                raise ConnectionError("not a MOKUKU II: Transfer Message has no notify")
+            await client.start_notify(protocol.MESSAGE_UUID, self.handle_notification)
+            if not client.is_connected:
+                raise ConnectionError("disconnected while connecting")
+        except BaseException:
+            await client.disconnect()
+            raise
         self.request_lock = asyncio.Lock()
-        self.client = BleakClient(address, disconnected_callback=self.handle_disconnect)
-        await self.client.connect()
-        # Catches a MOKUKU (S3) eye's address: its Transfer Message has no notify.
-        characteristic = self.client.services.get_characteristic(protocol.MESSAGE_UUID)
-        if characteristic is None or "notify" not in characteristic.properties:
-            await self.disconnect()
-            raise ConnectionError("not a MOKUKU II: Transfer Message has no notify")
-        await self.client.start_notify(protocol.MESSAGE_UUID, self.handle_notification)
+        self.client = client
 
     async def disconnect(self) -> None:
         if self.client is not None:
@@ -76,19 +83,26 @@ class MokukuIIClient:
                 and (reply.message_type, reply.property) == self.pending_key):
             self.pending_reply.set_result(reply)
 
-    async def request(self, message: bytes) -> Reply:
-        if not self.connected:
+    def connected_client(self) -> BleakClient:
+        """The current client; a local reference survives handle_disconnect clearing it."""
+        client = self.client
+        if client is None or not client.is_connected:
             raise ConnectionError("not connected")
+        return client
+
+    async def request(self, message: bytes) -> Reply:
+        self.connected_client()
         async with self.request_lock:
+            client = self.connected_client()
             self.pending_key = (message[0], message[1])
             self.pending_reply = self.loop.create_future()
-            await self.client.write_gatt_char(protocol.MESSAGE_UUID, message, response=True)
+            await client.write_gatt_char(protocol.MESSAGE_UUID, message, response=True)
             try:
                 return await asyncio.wait_for(self.pending_reply, REPLY_TIMEOUT_SECONDS)
             except asyncio.TimeoutError:
                 # Replies longer than one notification are only readable.
                 reply = protocol.decode_reply(
-                    bytes(await self.client.read_gatt_char(protocol.MESSAGE_UUID)))
+                    bytes(await client.read_gatt_char(protocol.MESSAGE_UUID)))
                 if reply and (reply.message_type, reply.property) == self.pending_key:
                     return reply
                 raise TimeoutError(f"no reply to {message[:2].hex(' ')}")
@@ -103,8 +117,6 @@ class MokukuIIClient:
 
     async def send_data(self, speed_kmh: int, rpm: int, fuel_percent: int,
                         command: protocol.Command = protocol.Command.NONE) -> None:
-        if not self.connected:
-            raise ConnectionError("not connected")
-        await self.client.write_gatt_char(
+        await self.connected_client().write_gatt_char(
             protocol.MESSAGE_UUID, protocol.encode_data(speed_kmh, rpm, fuel_percent, command),
             response=False)
