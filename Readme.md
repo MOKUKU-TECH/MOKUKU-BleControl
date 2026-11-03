@@ -526,6 +526,16 @@ python3 -m vibe_monitor report working --session test1 --project demo --tool Edi
 python3 -m vibe_monitor status
 ```
 
+## MOKUKU II monitor app
+
+MOKUKU II (one ESP32-S31) uses a data/set/get protocol on a single characteristic. Use
+[`monitor_app_II`](./monitor_app_II/readme.md) for it:
+
+```bash
+python monitor_app_II/app.py
+python monitor_app_II/cli.py get version sd_card
+```
+
 ## Reference BLE demo app (developers)
 
 `monitor_app/app.py` is a Python demo of the raw protocol — scan for devices,
