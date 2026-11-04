@@ -53,5 +53,9 @@ python monitor_app_II/cli.py delete-recordings --yes
 
 Without `--address`, the CLI connects to the strongest `mokukuii*` device.
 
+While connected, the client asks for the version whenever it has sent nothing for 10 s: MOKUKU II
+disconnects a host silent for 30 s, so a host lost without a clean disconnect does not block
+advertising.
+
 A reply too long for one notification (long strings at the default MTU) is read from the
 characteristic instead; the client does this after a 3 s timeout.
