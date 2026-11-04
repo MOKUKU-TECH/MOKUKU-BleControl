@@ -58,6 +58,18 @@ QPushButton:disabled {{
     color: {TEXT_FAINT};
     border-color: {BORDER};
 }}
+QProgressBar {{
+    background: #141414;
+    color: {TEXT_SECONDARY};
+    border: 1px solid {BORDER_STRONG};
+    border-radius: 2px;
+    min-height: 18px;
+    text-align: center;
+}}
+QProgressBar::chunk {{
+    background: {ACCENT};
+    border-radius: 1px;
+}}
 QPushButton[accent="true"] {{
     background: {ACCENT};
     color: #000000;

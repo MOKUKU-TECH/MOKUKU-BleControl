@@ -2,6 +2,7 @@
 """Bleak client for MOKUKU II: one connection, one request in flight at a time."""
 import asyncio
 import threading
+import time
 from concurrent.futures import Future
 from typing import Callable, List, NamedTuple, Optional
 
@@ -11,6 +12,8 @@ import protocol
 from protocol import MessageType, Property, Reply
 
 REPLY_TIMEOUT_SECONDS = 3.0
+# The device drops a host that writes nothing for 30 s.
+KEEPALIVE_SECONDS = 10.0
 
 
 class Device(NamedTuple):
@@ -30,6 +33,7 @@ class MokukuIIClient:
         self.request_lock: Optional[asyncio.Lock] = None
         self.pending_reply: Optional[asyncio.Future] = None
         self.pending_key = None
+        self.last_write_time = 0.0
 
     def submit(self, coroutine) -> Future:
         return asyncio.run_coroutine_threadsafe(coroutine, self.loop)
@@ -65,6 +69,19 @@ class MokukuIIClient:
             raise
         self.request_lock = asyncio.Lock()
         self.client = client
+        self.last_write_time = time.monotonic()
+        self.loop.create_task(self.keep_alive(client))
+
+    async def keep_alive(self, client: BleakClient) -> None:
+        """Asks for the version whenever nothing was written for KEEPALIVE_SECONDS."""
+        while self.client is client and client.is_connected:
+            await asyncio.sleep(1.0)
+            if time.monotonic() - self.last_write_time < KEEPALIVE_SECONDS:
+                continue
+            try:
+                await self.get(Property.VERSION)
+            except Exception:
+                pass  # a lost link ends the loop through handle_disconnect
 
     async def disconnect(self) -> None:
         if self.client is not None:
@@ -94,6 +111,7 @@ class MokukuIIClient:
         self.connected_client()
         async with self.request_lock:
             client = self.connected_client()
+            self.last_write_time = time.monotonic()
             self.pending_key = (message[0], message[1])
             self.pending_reply = self.loop.create_future()
             await client.write_gatt_char(protocol.MESSAGE_UUID, message, response=write_response)
@@ -157,6 +175,7 @@ class MokukuIIClient:
 
     async def send_data(self, speed_kmh: int, rpm: int, fuel_percent: int,
                         command: protocol.Command = protocol.Command.NONE) -> None:
+        self.last_write_time = time.monotonic()
         await self.connected_client().write_gatt_char(
             protocol.MESSAGE_UUID, protocol.encode_data(speed_kmh, rpm, fuel_percent, command),
             response=False)
