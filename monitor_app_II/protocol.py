@@ -5,12 +5,13 @@ Reference: doc/MOKUKU_II_BLE_CONTROL.md in the MobiliMOKUKU repository.
 """
 import struct
 from enum import IntEnum
-from typing import NamedTuple, Optional
+from typing import List, NamedTuple, Optional, Tuple
 
 SERVICE_UUID = "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
 MESSAGE_UUID = "d222e154-1a80-4e71-9a63-2aa2c0ce0a8c"
 DEVICE_NAME_PREFIX = "mokukuii"
 STRING_MAX_LENGTH = 64
+RECORDING_DIRECTORY = "/sdcard/record"
 
 
 class MessageType(IntEnum):
@@ -29,6 +30,9 @@ class Property(IntEnum):
     SD_CARD = 7
     WAKE_WORD_MODEL = 8
     MULTINET_LANGUAGE = 9
+    DIRECTORY = 10
+    FILE = 11
+    FILE_DATA = 12
 
 
 class Result(IntEnum):
@@ -56,8 +60,36 @@ class Reply(NamedTuple):
     value: bytes
 
 
-def encode_get(property: Property) -> bytes:
-    return bytes([MessageType.GET, property])
+def encode_get(property: Property, value: bytes = b"") -> bytes:
+    return bytes([MessageType.GET, property]) + value
+
+
+def encode_list_directory(first: int, path: str) -> bytes:
+    """Names from index first on; the device replies with as many as one notification holds."""
+    return encode_get(Property.DIRECTORY, struct.pack("<H", first) + path.encode("utf-8"))
+
+
+def encode_open_file(path: str) -> bytes:
+    return encode_get(Property.FILE, path.encode("utf-8"))
+
+
+def encode_read_file(key: int, position: int) -> bytes:
+    """The device sends as much as one notification holds."""
+    return encode_get(Property.FILE_DATA, struct.pack("<II", key, position))
+
+
+def decode_directory(value: bytes) -> List[str]:
+    return value.decode("utf-8", "replace").split(",") if value else []
+
+
+def decode_open_file(value: bytes) -> Tuple[int, int]:
+    """File key and size."""
+    return struct.unpack("<II", value)
+
+
+def decode_file_data(value: bytes) -> Tuple[int, bytes]:
+    """Position and bytes."""
+    return struct.unpack_from("<I", value)[0], value[4:]
 
 
 def encode_set(property: Property, value) -> bytes:
@@ -113,3 +145,7 @@ def describe_result(result: int) -> str:
         return Result(result).name.lower().replace("_", " ")
     except ValueError:
         return f"result {result}"
+
+
+def describe_failure(reply: Reply) -> str:
+    return f"{property_name(reply.property)}: {describe_result(reply.result)}"
