@@ -4,24 +4,25 @@ name: Build Vibe Monitor
 # own runner. Produces a zipped onedir the user extracts and double-clicks -
 # no Python environment needed on the target machine. Artifacts are attached
 # to the run; pushing a tag also publishes them to a GitHub Release.
+# Runs on pushes to master (each merge) and release tags. On a PR, add the "build app" label
+# (remove and add it again to rebuild); on any branch, start it with Actions > Build Vibe Monitor >
+# Run workflow, or gh workflow run build-vibe-monitor.yml --ref <branch>.
 on:
-  # Only build on push for the default branches and release tags. PR branches
-  # are covered by the pull_request trigger below - listing a PR's branch here
-  # too would fire both events on every push and run the workflow twice.
   push:
     branches: [master, main]
     tags: ["v*"]
   pull_request:
-    branches: [master]
+    types: [labeled]
   workflow_dispatch:
 
-# # Supersede in-progress runs for the same branch/PR when a new push arrives.
-# concurrency:
-#   group: ${{ github.workflow }}-${{ github.ref }}
-#   cancel-in-progress: true
+concurrency:
+  # Other PR labels also start this workflow, with the jobs skipped; they must not cancel a build.
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event.label.name }}
+  cancel-in-progress: true
 
 jobs:
   build:
+    if: github.event_name != 'pull_request' || github.event.label.name == 'build app'
     strategy:
       fail-fast: false
       matrix:
