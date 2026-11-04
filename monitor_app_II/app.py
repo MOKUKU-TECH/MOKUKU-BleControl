@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # Copyright 2026 MOKUKU Inc. All rights reserved.
-"""MOKUKU II monitor: scan, connect, read device info, edit settings, and send dashboard data."""
+"""MOKUKU II monitor: scan, connect, read device info, edit settings, download recordings, and send
+dashboard data."""
 import sys
 import time
 from pathlib import Path
@@ -10,6 +11,7 @@ from PyQt5.QtGui import QIntValidator
 from PyQt5.QtWidgets import (
     QApplication,
     QCheckBox,
+    QFileDialog,
     QFormLayout,
     QFrame,
     QHBoxLayout,
@@ -17,6 +19,8 @@ from PyQt5.QtWidgets import (
     QLineEdit,
     QListWidget,
     QListWidgetItem,
+    QMessageBox,
+    QProgressDialog,
     QPushButton,
     QTextEdit,
     QVBoxLayout,
@@ -51,16 +55,19 @@ class MonitorWindow(QWidget):
     # Carries a finished concurrent Future and its success handler to the Qt thread.
     request_finished = pyqtSignal(object, object)
     device_disconnected = pyqtSignal()
+    download_progress = pyqtSignal(int, int)
 
     def __init__(self):
         super().__init__()
         self.client = MokukuIIClient(on_disconnect=self.device_disconnected.emit)
         self.request_finished.connect(self.finish_request)
         self.device_disconnected.connect(lambda: self.set_connected(False))
+        self.download_dialog = None
+        self.download_progress.connect(self.show_download_progress)
         self.connected_widgets = []
 
         self.setWindowTitle("MOKUKU II Monitor")
-        self.setGeometry(300, 300, 520, 780)
+        self.setGeometry(300, 300, 520, 900)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(18, 18, 18, 12)
         layout.setSpacing(8)
@@ -69,6 +76,8 @@ class MonitorWindow(QWidget):
         self.add_info_section(layout)
         layout.addWidget(self.horizontal_line())
         self.add_settings_section(layout)
+        layout.addWidget(self.horizontal_line())
+        self.add_recordings_section(layout)
         layout.addWidget(self.horizontal_line())
         self.add_data_section(layout)
         layout.addWidget(self.horizontal_line())
@@ -149,6 +158,91 @@ class MonitorWindow(QWidget):
             self.connected_widgets.append(button)
         return row
 
+    def add_recordings_section(self, layout):
+        layout.addWidget(theme.section_label(f"Recordings ({protocol.RECORDING_DIRECTORY})"))
+        self.recording_list = QListWidget()
+        self.recording_list.setFixedHeight(90)
+        self.recording_list.setFont(theme.monospace_font())
+        layout.addWidget(self.recording_list)
+        row = QHBoxLayout()
+        list_button = QPushButton("List")
+        list_button.clicked.connect(self.list_recordings)
+        download_button = QPushButton("Download")
+        download_button.clicked.connect(self.download_recording)
+        delete_button = QPushButton("Delete All")
+        delete_button.clicked.connect(self.delete_recordings)
+        row.addWidget(list_button)
+        row.addWidget(download_button)
+        row.addWidget(delete_button)
+        layout.addLayout(row)
+        self.connected_widgets += [list_button, download_button, delete_button]
+
+    def list_recordings(self):
+        def show_names(names):
+            self.recording_list.clear()
+            self.recording_list.addItems(sorted(names))
+            self.log(f"{len(names)} recordings")
+
+        self.run(self.client.list_directory(), show_names)
+
+    def delete_recordings(self):
+        answer = QMessageBox.question(
+            self, "Delete recordings",
+            f"Delete every file in {protocol.RECORDING_DIRECTORY}? This cannot be undone.")
+        if answer != QMessageBox.Yes:
+            return
+
+        def deleted(_):
+            self.recording_list.clear()
+            self.log("recordings deleted")
+
+        self.run(self.client.delete_recordings(), deleted)
+
+    def download_recording(self):
+        item = self.recording_list.currentItem()
+        if item is None:
+            self.log("list and pick a recording first")
+            return
+        name = item.text()
+        output, _ = QFileDialog.getSaveFileName(self, "Save recording", name)
+        if not output:
+            return
+        self.log(f"downloading {name}")
+        dialog = QProgressDialog(f"Downloading {name}…", "Cancel", 0, 1, self)
+        dialog.setWindowTitle("Download")
+        dialog.setWindowModality(Qt.WindowModal)
+        dialog.setMinimumDuration(0)
+        dialog.setAutoClose(False)
+        dialog.setAutoReset(False)
+        dialog.setMinimumWidth(360)
+        dialog.setValue(0)
+        dialog.download_name = name
+        dialog.start_time = time.monotonic()
+        self.download_dialog = dialog
+
+        def save(data):
+            Path(output).write_bytes(data)
+            self.log(f"saved {len(data)} bytes to {output}")
+
+        def close_dialog():
+            dialog.close()
+            self.download_dialog = None
+
+        future = self.run(self.client.download(f"{protocol.RECORDING_DIRECTORY}/{name}",
+                                               self.download_progress.emit),
+                          save, on_finished=close_dialog)
+        dialog.canceled.connect(future.cancel)
+
+    def show_download_progress(self, received, size):
+        dialog = self.download_dialog
+        if dialog is None:
+            return
+        dialog.setMaximum(max(size, 1))
+        dialog.setValue(received)
+        rate = received / max(time.monotonic() - dialog.start_time, 1e-3) / 1024
+        dialog.setLabelText(f"Downloading {dialog.download_name}\n"
+                            f"{received / 1024:.1f} of {size / 1024:.1f} KB, {rate:.1f} KB/s")
+
     def add_data_section(self, layout):
         layout.addWidget(theme.section_label("Dashboard Data"))
         row = QHBoxLayout()
@@ -173,11 +267,20 @@ class MonitorWindow(QWidget):
     def log(self, text):
         self.log_view.append(f"{time.strftime('%H:%M:%S')}  {text}")
 
-    def run(self, coroutine, on_success=None):
+    def run(self, coroutine, on_success=None, on_finished=None):
+        """on_finished runs after success, failure, or cancellation."""
         future = self.client.submit(coroutine)
-        future.add_done_callback(lambda done: self.request_finished.emit(done, on_success))
+        future.add_done_callback(
+            lambda done: self.request_finished.emit(done, (on_success, on_finished)))
+        return future
 
-    def finish_request(self, future, on_success):
+    def finish_request(self, future, handlers):
+        on_success, on_finished = handlers
+        if on_finished:
+            on_finished()
+        if future.cancelled():
+            self.log("cancelled")
+            return
         error = future.exception()
         if error:
             self.log(f"error: {error}")
@@ -252,8 +355,7 @@ class MonitorWindow(QWidget):
     def get_setting(self, property):
         def show_setting(reply):
             if reply.result != Result.OK:
-                self.log(f"get {protocol.property_name(property)}: "
-                         f"{protocol.describe_result(reply.result)}")
+                self.log(f"get {protocol.describe_failure(reply)}")
             elif property == Property.OBD_ENABLED:
                 self.obd_box.setChecked(reply.value[:1] == b"\x01")
             else:

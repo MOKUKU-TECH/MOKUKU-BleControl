@@ -90,13 +90,13 @@ class MokukuIIClient:
             raise ConnectionError("not connected")
         return client
 
-    async def request(self, message: bytes) -> Reply:
+    async def request(self, message: bytes, write_response: bool = True) -> Reply:
         self.connected_client()
         async with self.request_lock:
             client = self.connected_client()
             self.pending_key = (message[0], message[1])
             self.pending_reply = self.loop.create_future()
-            await client.write_gatt_char(protocol.MESSAGE_UUID, message, response=True)
+            await client.write_gatt_char(protocol.MESSAGE_UUID, message, response=write_response)
             try:
                 return await asyncio.wait_for(self.pending_reply, REPLY_TIMEOUT_SECONDS)
             except asyncio.TimeoutError:
@@ -111,6 +111,46 @@ class MokukuIIClient:
 
     async def get(self, property: Property) -> Reply:
         return await self.request(protocol.encode_get(property))
+
+    async def checked_request(self, message: bytes, write_response: bool = True) -> bytes:
+        """The reply value; raises on a result other than OK."""
+        reply = await self.request(message, write_response)
+        if reply.result != protocol.Result.OK:
+            raise IOError(protocol.describe_failure(reply))
+        return reply.value
+
+    async def list_directory(self, path: str = protocol.RECORDING_DIRECTORY) -> List[str]:
+        """Every entry name, one page per request until an empty page."""
+        names = []
+        while True:
+            page = protocol.decode_directory(
+                await self.checked_request(protocol.encode_list_directory(len(names), path)))
+            if not page:
+                return names
+            names += page
+
+    async def delete_recordings(self) -> None:
+        """Deletes every file in /sdcard/record; refused while recording."""
+        await self.checked_request(protocol.encode_set(Property.DELETE_RECORDINGS, None))
+
+    async def download(self, path: str,
+                       on_progress: Optional[Callable[[int, int], None]] = None) -> bytes:
+        """Reads the file chunk by chunk; on_progress(received, size) after each chunk."""
+        key, size = protocol.decode_open_file(
+            await self.checked_request(protocol.encode_open_file(path)))
+        data = bytearray()
+        while len(data) < size:
+            # Without a write response each chunk takes one connection interval less.
+            position, chunk = protocol.decode_file_data(await self.checked_request(
+                protocol.encode_read_file(key, len(data)), write_response=False))
+            if position != len(data):
+                continue  # a stale reply; ask again from the same position
+            if not chunk:
+                raise IOError(f"{path}: empty chunk at {position} of {size} bytes")
+            data += chunk
+            if on_progress:
+                on_progress(len(data), size)
+        return bytes(data)
 
     async def set(self, property: Property, value) -> Reply:
         return await self.request(protocol.encode_set(property, value))

@@ -10,7 +10,7 @@ import warnings
 MAGIC = b"MOKUREC\0"
 VERSION = 1
 SYNC = b"\xa5\x5a"
-FRAME_SIZES = {1: 37, 2: 17, 3: 42}
+FRAME_SIZES = {1: 37, 2: 17, 3: 42, 4: 57}
 
 
 def _binary_records(data, position):
@@ -34,6 +34,12 @@ def _binary_records(data, position):
             timestamp, ax, ay, az, gx, gy, gz = struct.unpack_from("<q6f", data, position + 3)
             yield {"type": "imu", "time": timestamp, "ax": ax, "ay": ay,
                    "az": az, "gx": gx, "gy": gy, "gz": gz}
+        elif record_type == 4:
+            (timestamp, ax, ay, az, gx, gy, gz, mx, my, mz, temperature,
+             pressure) = struct.unpack_from("<q11f", data, position + 3)
+            yield {"type": "imu", "time": timestamp, "ax": ax, "ay": ay,
+                   "az": az, "gx": gx, "gy": gy, "gz": gz, "mx": mx, "my": my,
+                   "mz": mz, "temperature": temperature, "pressure": pressure}
         elif record_type == 2:
             timestamp, speed = struct.unpack_from("<qi", data, position + 3)
             yield {"type": "speed", "time": timestamp, "speed": speed}
