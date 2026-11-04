@@ -33,6 +33,7 @@ class Property(IntEnum):
     DIRECTORY = 10
     FILE = 11
     FILE_DATA = 12
+    DELETE_RECORDINGS = 13
 
 
 class Result(IntEnum):
@@ -41,6 +42,7 @@ class Result(IntEnum):
     READ_ONLY = 2
     INVALID_VALUE = 3
     UNAVAILABLE = 4
+    WRITE_ONLY = 5
 
 
 class Command(IntEnum):
@@ -93,13 +95,15 @@ def decode_file_data(value: bytes) -> Tuple[int, bytes]:
 
 
 def encode_set(property: Property, value) -> bytes:
-    """Strings for the text properties, bool for OBD enabled."""
+    """Strings for the text properties, bool for OBD enabled, None for delete recordings."""
     if property in STRING_PROPERTIES:
         encoded = value.encode("utf-8")
         if not 1 <= len(encoded) <= STRING_MAX_LENGTH:
             raise ValueError(f"{property.name} must be 1-{STRING_MAX_LENGTH} bytes")
     elif property == Property.OBD_ENABLED:
         encoded = bytes([1 if value else 0])
+    elif property == Property.DELETE_RECORDINGS:
+        encoded = b""
     else:
         raise ValueError(f"{property.name} is read-only")
     return bytes([MessageType.SET, property]) + encoded

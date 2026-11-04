@@ -9,6 +9,7 @@
     python cli.py data 60 2400 75 [--command reboot]
     python cli.py ls [/sdcard/record]
     python cli.py download /sdcard/record/mobili_1.record [--output mobili_1.record]
+    python cli.py delete-recordings --yes
 
 Without --address, it connects to the strongest mokukuii* device found.
 """
@@ -68,6 +69,9 @@ def main() -> int:
     download_parser = commands.add_parser("download")
     download_parser.add_argument("path")
     download_parser.add_argument("--output", help="local file; the device file's name when omitted")
+    delete_parser = commands.add_parser("delete-recordings")
+    delete_parser.add_argument("--yes", action="store_true", required=True,
+                               help="confirm deleting every file in /sdcard/record")
     arguments = parser.parse_args()
     if arguments.action == "set":
         try:
@@ -112,6 +116,9 @@ def main() -> int:
             show = lambda received, size: print(f"\r{received}/{size} bytes", end="", flush=True)
             output.write_bytes(run(client.download(arguments.path, show)))
             print(f"\nsaved {output}")
+        elif arguments.action == "delete-recordings":
+            run(client.delete_recordings())
+            print("recordings deleted")
         else:
             run(client.send_data(arguments.speed_kmh, arguments.rpm, arguments.fuel_percent,
                                  Command[arguments.command.upper()]))

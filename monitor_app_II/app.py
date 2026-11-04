@@ -19,6 +19,7 @@ from PyQt5.QtWidgets import (
     QLineEdit,
     QListWidget,
     QListWidgetItem,
+    QMessageBox,
     QPushButton,
     QTextEdit,
     QVBoxLayout,
@@ -167,10 +168,13 @@ class MonitorWindow(QWidget):
         list_button.clicked.connect(self.list_recordings)
         download_button = QPushButton("Download")
         download_button.clicked.connect(self.download_recording)
+        delete_button = QPushButton("Delete All")
+        delete_button.clicked.connect(self.delete_recordings)
         row.addWidget(list_button)
         row.addWidget(download_button)
+        row.addWidget(delete_button)
         layout.addLayout(row)
-        self.connected_widgets += [list_button, download_button]
+        self.connected_widgets += [list_button, download_button, delete_button]
 
     def list_recordings(self):
         def show_names(names):
@@ -179,6 +183,19 @@ class MonitorWindow(QWidget):
             self.log(f"{len(names)} recordings")
 
         self.run(self.client.list_directory(), show_names)
+
+    def delete_recordings(self):
+        answer = QMessageBox.question(
+            self, "Delete recordings",
+            f"Delete every file in {protocol.RECORDING_DIRECTORY}? This cannot be undone.")
+        if answer != QMessageBox.Yes:
+            return
+
+        def deleted(_):
+            self.recording_list.clear()
+            self.log("recordings deleted")
+
+        self.run(self.client.delete_recordings(), deleted)
 
     def download_recording(self):
         item = self.recording_list.currentItem()

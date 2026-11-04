@@ -129,6 +129,10 @@ class MokukuIIClient:
                 return names
             names += page
 
+    async def delete_recordings(self) -> None:
+        """Deletes every file in /sdcard/record; refused while recording."""
+        await self.checked_request(protocol.encode_set(Property.DELETE_RECORDINGS, None))
+
     async def download(self, path: str,
                        on_progress: Optional[Callable[[int, int], None]] = None) -> bytes:
         """Reads the file chunk by chunk; on_progress(received, size) after each chunk."""
