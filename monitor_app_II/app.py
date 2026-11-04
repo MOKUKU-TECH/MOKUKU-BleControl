@@ -20,6 +20,7 @@ from PyQt5.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMessageBox,
+    QProgressDialog,
     QPushButton,
     QTextEdit,
     QVBoxLayout,
@@ -61,8 +62,8 @@ class MonitorWindow(QWidget):
         self.client = MokukuIIClient(on_disconnect=self.device_disconnected.emit)
         self.request_finished.connect(self.finish_request)
         self.device_disconnected.connect(lambda: self.set_connected(False))
-        self.download_progress.connect(
-            lambda received, size: self.set_status("connected", f"Downloading {received}/{size} bytes"))
+        self.download_dialog = None
+        self.download_progress.connect(self.show_download_progress)
         self.connected_widgets = []
 
         self.setWindowTitle("MOKUKU II Monitor")
@@ -207,14 +208,40 @@ class MonitorWindow(QWidget):
         if not output:
             return
         self.log(f"downloading {name}")
+        dialog = QProgressDialog(f"Downloading {name}…", "Cancel", 0, 1, self)
+        dialog.setWindowTitle("Download")
+        dialog.setWindowModality(Qt.WindowModal)
+        dialog.setMinimumDuration(0)
+        dialog.setAutoClose(False)
+        dialog.setAutoReset(False)
+        dialog.setMinimumWidth(360)
+        dialog.setValue(0)
+        dialog.download_name = name
+        dialog.start_time = time.monotonic()
+        self.download_dialog = dialog
 
         def save(data):
-            self.set_status("connected", "Connected")
             Path(output).write_bytes(data)
             self.log(f"saved {len(data)} bytes to {output}")
 
-        self.run(self.client.download(f"{protocol.RECORDING_DIRECTORY}/{name}",
-                                      self.download_progress.emit), save)
+        def close_dialog():
+            dialog.close()
+            self.download_dialog = None
+
+        future = self.run(self.client.download(f"{protocol.RECORDING_DIRECTORY}/{name}",
+                                               self.download_progress.emit),
+                          save, on_finished=close_dialog)
+        dialog.canceled.connect(future.cancel)
+
+    def show_download_progress(self, received, size):
+        dialog = self.download_dialog
+        if dialog is None:
+            return
+        dialog.setMaximum(max(size, 1))
+        dialog.setValue(received)
+        rate = received / max(time.monotonic() - dialog.start_time, 1e-3) / 1024
+        dialog.setLabelText(f"Downloading {dialog.download_name}\n"
+                            f"{received / 1024:.1f} of {size / 1024:.1f} KB, {rate:.1f} KB/s")
 
     def add_data_section(self, layout):
         layout.addWidget(theme.section_label("Dashboard Data"))
@@ -240,11 +267,20 @@ class MonitorWindow(QWidget):
     def log(self, text):
         self.log_view.append(f"{time.strftime('%H:%M:%S')}  {text}")
 
-    def run(self, coroutine, on_success=None):
+    def run(self, coroutine, on_success=None, on_finished=None):
+        """on_finished runs after success, failure, or cancellation."""
         future = self.client.submit(coroutine)
-        future.add_done_callback(lambda done: self.request_finished.emit(done, on_success))
+        future.add_done_callback(
+            lambda done: self.request_finished.emit(done, (on_success, on_finished)))
+        return future
 
-    def finish_request(self, future, on_success):
+    def finish_request(self, future, handlers):
+        on_success, on_finished = handlers
+        if on_finished:
+            on_finished()
+        if future.cancelled():
+            self.log("cancelled")
+            return
         error = future.exception()
         if error:
             self.log(f"error: {error}")

@@ -36,7 +36,7 @@ Scan, pick a `mokukuii*` device, and connect. The app then reads the MOKUKU vers
 SD card space, wake word model, command language, and settings. Settings (Wi-Fi name and password, remote address, OBD scanning)
 each have **Get** and **Set**. **Send** writes one dashboard data packet; **Reboot** sends the
 reboot command. Under Recordings, **List** reads the names in `/sdcard/record`, **Download**
-saves the selected recording, and **Delete All** deletes every recording after a confirmation.
+saves the selected recording (a window shows its progress and rate; **Cancel** stops it), and **Delete All** deletes every recording after a confirmation.
 
 ## Command line
 
