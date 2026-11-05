@@ -36,7 +36,8 @@ Scan, pick a `mokukuii*` device, and connect. The app then reads the MOKUKU vers
 SD card space, wake word model, command language, and settings. Settings (Wi-Fi name and password, remote address, OBD scanning)
 each have **Get** and **Set**. **Send** writes one dashboard data packet; **Reboot** sends the
 reboot command. Under Recordings, **List** reads the names in `/sdcard/record`, **Download**
-saves the selected recording (a window shows its progress and rate; **Cancel** stops it), and **Delete All** deletes every recording after a confirmation.
+saves the selected recording (a window shows its progress and rate; **Cancel** stops it, keeping
+the bytes received; saving over that file again offers to resume), and **Delete All** deletes every recording after a confirmation.
 
 ## Command line
 
@@ -48,10 +49,15 @@ python monitor_app_II/cli.py set obd_enabled off
 python monitor_app_II/cli.py data 60 2400 75 --command none
 python monitor_app_II/cli.py ls                      # /sdcard/record by default
 python monitor_app_II/cli.py download /sdcard/record/mobili_1.record --output mobili_1.record
+python monitor_app_II/cli.py download /sdcard/record/mobili_1.record --output mobili_1.record --resume
+python monitor_app_II/cli.py upload firmware.bin /sdcard/firmware.bin   # replaces an existing file
 python monitor_app_II/cli.py delete-recordings --yes
 ```
 
 Without `--address`, the CLI connects to the strongest `mokukuii*` device.
+
+Ctrl-C stops a transfer on the device as well. An interrupted download keeps the bytes received;
+`--resume` continues after them once the device confirms by CRC that they match its file.
 
 While connected, the client asks for the version whenever it has sent nothing for 10 s: MOKUKU II
 disconnects a host silent for 30 s, so a host lost without a clean disconnect does not block

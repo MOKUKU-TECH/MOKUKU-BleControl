@@ -8,13 +8,16 @@
     python cli.py set obd_enabled 0
     python cli.py data 60 2400 75 [--command reboot]
     python cli.py ls [/sdcard/record]
-    python cli.py download /sdcard/record/mobili_1.record [--output mobili_1.record]
+    python cli.py download /sdcard/record/mobili_1.record [--output mobili_1.record] [--resume]
+    python cli.py upload firmware.bin /sdcard/firmware.bin
     python cli.py delete-recordings --yes
 
-Without --address, it connects to the strongest mokukuii* device found.
+Without --address, it connects to the strongest mokukuii* device found. Ctrl-C stops a transfer on
+the device too; an interrupted download keeps its bytes for --resume.
 """
 import argparse
 import sys
+import time
 from pathlib import Path
 
 from bleak.exc import BleakError
@@ -36,6 +39,11 @@ def parse_set_value(property: Property, text: str):
     if property == Property.OBD_ENABLED:
         return text.lower() in ("1", "on", "true")
     return text
+
+
+def transfer_rate(size: int, started: float) -> str:
+    seconds = time.monotonic() - started
+    return f" in {seconds:.1f} s, {size / 1024 / seconds:.1f} KB/s" if seconds > 0 else ""
 
 
 def print_reply(reply) -> None:
@@ -69,6 +77,11 @@ def main() -> int:
     download_parser = commands.add_parser("download")
     download_parser.add_argument("path")
     download_parser.add_argument("--output", help="local file; the device file's name when omitted")
+    download_parser.add_argument("--resume", action="store_true",
+                                 help="continue after the bytes already in the local file")
+    upload_parser = commands.add_parser("upload")
+    upload_parser.add_argument("source", type=Path, help="local file")
+    upload_parser.add_argument("path", help="device path under /sdcard; replaced when it exists")
     delete_parser = commands.add_parser("delete-recordings")
     delete_parser.add_argument("--yes", action="store_true", required=True,
                                help="confirm deleting every file in /sdcard/record")
@@ -81,7 +94,15 @@ def main() -> int:
             parser.error(str(error))
 
     client = MokukuIIClient()
-    run = lambda coroutine: client.submit(coroutine).result()
+
+    def run(coroutine):
+        future = client.submit(coroutine)
+        try:
+            return future.result()
+        except KeyboardInterrupt:
+            future.cancel()
+            client.submit(client.wait_idle()).result(timeout=10)  # the device is told to stop
+            raise
 
     address = arguments.address
     if arguments.action == "scan" or not address:
@@ -114,8 +135,15 @@ def main() -> int:
         elif arguments.action == "download":
             output = Path(arguments.output or Path(arguments.path).name)
             show = lambda received, size: print(f"\r{received}/{size} bytes", end="", flush=True)
-            output.write_bytes(run(client.download(arguments.path, show)))
-            print(f"\nsaved {output}")
+            started = time.monotonic()
+            transferred = run(client.download(arguments.path, output, arguments.resume, show))
+            print(f"\nsaved {output}{transfer_rate(transferred, started)}")
+        elif arguments.action == "upload":
+            data = arguments.source.read_bytes()
+            show = lambda sent, size: print(f"\r{sent}/{size} bytes", end="", flush=True)
+            started = time.monotonic()
+            run(client.upload(arguments.path, data, show))
+            print(f"\nuploaded {arguments.path}{transfer_rate(len(data), started)}")
         elif arguments.action == "delete-recordings":
             run(client.delete_recordings())
             print("recordings deleted")
@@ -126,6 +154,9 @@ def main() -> int:
     except OSError as error:
         print(error, file=sys.stderr)
         return 1
+    except KeyboardInterrupt:
+        print("\nstopped", file=sys.stderr)
+        return 130
     finally:
         run(client.disconnect())
     return 0
