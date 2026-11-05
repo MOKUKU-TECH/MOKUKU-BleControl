@@ -1,9 +1,13 @@
 # Copyright 2026 MOKUKU Inc. All rights reserved.
 """Bleak client for MOKUKU II: one connection, one request in flight at a time."""
 import asyncio
+import binascii
+import contextlib
+import struct
 import threading
 import time
 from concurrent.futures import Future
+from pathlib import Path
 from typing import Callable, List, NamedTuple, Optional
 
 from bleak import BleakClient, BleakScanner
@@ -12,6 +16,8 @@ import protocol
 from protocol import MessageType, Property, Reply
 
 REPLY_TIMEOUT_SECONDS = 3.0
+# Consecutive failed sectors a file transfer survives before it gives up.
+TRANSFER_RETRIES = 3
 # The device drops a host that writes nothing for 30 s.
 KEEPALIVE_SECONDS = 10.0
 
@@ -32,6 +38,8 @@ class MokukuIIClient:
         self.client: Optional[BleakClient] = None
         self.request_lock: Optional[asyncio.Lock] = None
         self.pending_reply: Optional[asyncio.Future] = None
+        self.file_commands: asyncio.Queue = asyncio.Queue()
+        self.file_data: asyncio.Queue = asyncio.Queue()
         self.pending_key = None
         self.last_write_time = 0.0
 
@@ -62,6 +70,10 @@ class MokukuIIClient:
             if characteristic is None or "notify" not in characteristic.properties:
                 raise ConnectionError("not a MOKUKU II: Transfer Message has no notify")
             await client.start_notify(protocol.MESSAGE_UUID, self.handle_notification)
+            await client.start_notify(protocol.FILE_COMMAND_UUID,
+                                      lambda _, data: self.file_commands.put_nowait(bytes(data)))
+            await client.start_notify(protocol.FILE_DATA_UUID,
+                                      lambda _, data: self.file_data.put_nowait(bytes(data)))
             if not client.is_connected:
                 raise ConnectionError("disconnected while connecting")
         except BaseException:
@@ -107,14 +119,23 @@ class MokukuIIClient:
             raise ConnectionError("not connected")
         return client
 
-    async def request(self, message: bytes, write_response: bool = True) -> Reply:
+    @contextlib.asynccontextmanager
+    async def locked_client(self):
+        """Holds the request lock, so one request or transfer is in flight at a time."""
         self.connected_client()
         async with self.request_lock:
-            client = self.connected_client()
-            self.last_write_time = time.monotonic()
+            yield self.connected_client()
+
+    async def write(self, client: BleakClient, uuid: str, value: bytes,
+                    response: bool = False) -> None:
+        self.last_write_time = time.monotonic()
+        await client.write_gatt_char(uuid, value, response=response)
+
+    async def request(self, message: bytes, write_response: bool = True) -> Reply:
+        async with self.locked_client() as client:
             self.pending_key = (message[0], message[1])
             self.pending_reply = self.loop.create_future()
-            await client.write_gatt_char(protocol.MESSAGE_UUID, message, response=write_response)
+            await self.write(client, protocol.MESSAGE_UUID, message, write_response)
             try:
                 return await asyncio.wait_for(self.pending_reply, REPLY_TIMEOUT_SECONDS)
             except asyncio.TimeoutError:
@@ -151,31 +172,153 @@ class MokukuIIClient:
         """Deletes every file in /sdcard/record; refused while recording."""
         await self.checked_request(protocol.encode_set(Property.DELETE_RECORDINGS, None))
 
-    async def download(self, path: str,
-                       on_progress: Optional[Callable[[int, int], None]] = None) -> bytes:
-        """Reads the file chunk by chunk; on_progress(received, size) after each chunk."""
-        key, size = protocol.decode_open_file(
-            await self.checked_request(protocol.encode_open_file(path)))
-        data = bytearray()
-        while len(data) < size:
-            # Without a write response each chunk takes one connection interval less.
-            position, chunk = protocol.decode_file_data(await self.checked_request(
-                protocol.encode_read_file(key, len(data)), write_response=False))
-            if position != len(data):
-                continue  # a stale reply; ask again from the same position
-            if not chunk:
-                raise IOError(f"{path}: empty chunk at {position} of {size} bytes")
-            data += chunk
-            if on_progress:
-                on_progress(len(data), size)
-        return bytes(data)
+    @contextlib.asynccontextmanager
+    async def file_transfer(self):
+        """Holds the request lock with the file queues emptied of earlier transfers' leftovers;
+        a transfer that fails or is cancelled is stopped on the device."""
+        async with self.locked_client() as client:
+            for queue in (self.file_commands, self.file_data):
+                while not queue.empty():
+                    queue.get_nowait()
+            try:
+                yield client
+            except BaseException:
+                with contextlib.suppress(Exception):
+                    await self.write(client, protocol.FILE_COMMAND_UUID, protocol.encode_stop())
+                raise
+
+    async def wait_idle(self) -> None:
+        """Returns once no request or transfer, including a cancelled one stopping, holds the lock."""
+        if self.request_lock is not None:
+            async with self.request_lock:
+                pass
+
+    async def start_file_command(self, client: BleakClient, frame: bytes, path: str,
+                                 timeout: float = REPLY_TIMEOUT_SECONDS) -> bytes:
+        """Sends a start command; returns the values of its accepted reply."""
+        await self.write(client, protocol.FILE_COMMAND_UUID, frame, response=True)
+        command = struct.unpack_from("<H", frame)[0]
+        while True:
+            reply = protocol.decode_command_reply(
+                await asyncio.wait_for(self.file_commands.get(), timeout))
+            if reply and reply.command == command:
+                break
+        if reply.status != protocol.CommandStatus.ACCEPTED:
+            raise IOError(f"{path}: {protocol.CommandStatus(reply.status).name.lower()}")
+        return reply.values
+
+    @staticmethod
+    def count_failure(failures: int, path: str, sector: int) -> int:
+        failures += 1
+        if failures > TRANSFER_RETRIES:
+            raise IOError(f"{path}: sector {sector} failed {failures} times")
+        return failures
+
+    async def receive_sector(self, sector: int, length: int) -> Optional[bytes]:
+        """The sector's bytes once its last packet arrives; None when packets are missing, its CRC
+        fails, or packets stop."""
+        blob, next_sequence, intact = bytearray(), 0, True
+        try:
+            while True:
+                packet = await asyncio.wait_for(self.file_data.get(), REPLY_TIMEOUT_SECONDS)
+                index, sequence, payload = protocol.decode_packet(packet)
+                if index != sector:
+                    continue  # left over from a resent sector
+                if sequence == 0:
+                    blob, next_sequence, intact = bytearray(), 0, True
+                if sequence != protocol.LAST_PACKET:
+                    intact = intact and sequence == next_sequence
+                    next_sequence = sequence + 1
+                blob += payload
+                if sequence == protocol.LAST_PACKET:
+                    body = protocol.without_crc(bytes(blob))
+                    return body if intact and body is not None and len(body) == length else None
+        except asyncio.TimeoutError:
+            return None
+
+    async def download(self, path: str, output: Path, resume: bool = False,
+                       on_progress: Optional[Callable[[int, int], None]] = None) -> int:
+        """Saves the device file to output sector by sector, each checked by its CRC and
+        acknowledged; returns the bytes transferred. With resume, continues after output's bytes
+        once the device confirms they match its file. A failed or cancelled download leaves the
+        bytes received in output, ready to resume. on_progress(received, size) after each sector."""
+        offset = output.stat().st_size if resume and output.exists() else 0
+        prefix_crc = 0
+        with open(output, "r+b" if offset else "wb") as file:
+            if offset:
+                for chunk in iter(lambda: file.read(1 << 20), b""):
+                    prefix_crc = binascii.crc_hqx(chunk, prefix_crc)
+            async with self.file_transfer() as client:
+                # The device reads the saved prefix to check it: allow for that at a slow 1 MB/s.
+                size, sector_size, device_crc = struct.unpack("<IIH", await self.start_file_command(
+                    client, protocol.encode_start_download(offset, path), path,
+                    REPLY_TIMEOUT_SECONDS + offset / 1e6))
+                if device_crc != prefix_crc:
+                    raise IOError(f"{output} is not the start of {path}; download it without resuming")
+                received = offset
+                sector = failures = 0
+                while received < size:
+                    body = await self.receive_sector(sector, min(sector_size, size - received))
+                    if body is None:
+                        failures = self.count_failure(failures, path, sector)
+                        status, next_sector = protocol.SectorStatus.CRC_ERROR, sector
+                    else:
+                        file.write(body)
+                        received += len(body)
+                        failures = 0
+                        status, next_sector = protocol.SectorStatus.OK, sector + 1
+                    await self.write(client, protocol.FILE_DATA_UUID,
+                                     protocol.encode_acknowledgement(sector, status, next_sector))
+                    sector = next_sector
+                    if body is not None and on_progress:
+                        on_progress(received, size)
+        return size - offset
+
+    async def upload(self, path: str, data: bytes,
+                     on_progress: Optional[Callable[[int, int], None]] = None) -> None:
+        """Writes data to path sector by sector, each checked by its CRC and acknowledged;
+        on_progress(sent, size) after each sector. The device keeps the old file until the last
+        sector arrives."""
+        async with self.file_transfer() as client:
+            sector_size, packet_size = struct.unpack("<IH", await self.start_file_command(
+                client, protocol.encode_start_upload(len(data), path), path))
+            chunk_size = packet_size - protocol.PACKET_HEADER_SIZE
+            sectors = -(-len(data) // sector_size)
+            sector = failures = 0
+            while sector < sectors:
+                start = sector * sector_size
+                for packet in protocol.encode_sector(
+                        sector, data[start:start + sector_size], chunk_size):
+                    await self.write(client, protocol.FILE_DATA_UUID, packet)
+                acknowledgement = await self.sector_acknowledgement(sector)
+                if acknowledgement is None:  # resend the sector
+                    failures = self.count_failure(failures, path, sector)
+                    continue
+                if acknowledgement.status == protocol.SectorStatus.WRITE_ERROR:
+                    raise IOError(f"{path}: the device could not write sector {sector}")
+                if acknowledgement.status == protocol.SectorStatus.OK:
+                    failures = 0
+                    if on_progress:
+                        on_progress(min((sector + 1) * sector_size, len(data)), len(data))
+                else:
+                    failures = self.count_failure(failures, path, sector)
+                sector = acknowledgement.next_sector
+
+    async def sector_acknowledgement(self, sector: int):
+        """The device's acknowledgement of this sector, None on a timeout."""
+        try:
+            while True:
+                acknowledgement = protocol.decode_acknowledgement(
+                    await asyncio.wait_for(self.file_data.get(), REPLY_TIMEOUT_SECONDS))
+                if acknowledgement and acknowledgement.sector == sector:
+                    return acknowledgement
+        except asyncio.TimeoutError:
+            return None
 
     async def set(self, property: Property, value) -> Reply:
         return await self.request(protocol.encode_set(property, value))
 
     async def send_data(self, speed_kmh: int, rpm: int, fuel_percent: int,
                         command: protocol.Command = protocol.Command.NONE) -> None:
-        self.last_write_time = time.monotonic()
-        await self.connected_client().write_gatt_char(
-            protocol.MESSAGE_UUID, protocol.encode_data(speed_kmh, rpm, fuel_percent, command),
-            response=False)
+        await self.write(self.connected_client(), protocol.MESSAGE_UUID,
+                         protocol.encode_data(speed_kmh, rpm, fuel_percent, command))

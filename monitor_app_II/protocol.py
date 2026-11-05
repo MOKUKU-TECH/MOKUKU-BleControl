@@ -3,15 +3,22 @@
 
 Reference: doc/MOKUKU_II_BLE_CONTROL.md in the MobiliMOKUKU repository.
 """
+import binascii
 import struct
 from enum import IntEnum
 from typing import List, NamedTuple, Optional, Tuple
 
 SERVICE_UUID = "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
 MESSAGE_UUID = "d222e154-1a80-4e71-9a63-2aa2c0ce0a8c"
+FILE_COMMAND_UUID = "18bf25fe-c5c8-40fe-ab13-9aa144d65b69"
+FILE_DATA_UUID = "737cbd9b-848b-4fad-87b8-5c3b9f75768d"
 DEVICE_NAME_PREFIX = "mokukuii"
 STRING_MAX_LENGTH = 64
 RECORDING_DIRECTORY = "/sdcard/record"
+# File data packets: sector index (2), sequence number (1), bytes.
+PACKET_HEADER_SIZE = 3
+# Sequence number of a sector's last packet, which ends with the sector's CRC.
+LAST_PACKET = 0xFF
 
 
 class MessageType(IntEnum):
@@ -31,8 +38,6 @@ class Property(IntEnum):
     WAKE_WORD_MODEL = 8
     MULTINET_LANGUAGE = 9
     DIRECTORY = 10
-    FILE = 11
-    FILE_DATA = 12
     DELETE_RECORDINGS = 13
 
 
@@ -71,27 +76,100 @@ def encode_list_directory(first: int, path: str) -> bytes:
     return encode_get(Property.DIRECTORY, struct.pack("<H", first) + path.encode("utf-8"))
 
 
-def encode_open_file(path: str) -> bytes:
-    return encode_get(Property.FILE, path.encode("utf-8"))
-
-
-def encode_read_file(key: int, position: int) -> bytes:
-    """The device sends as much as one notification holds."""
-    return encode_get(Property.FILE_DATA, struct.pack("<II", key, position))
-
-
 def decode_directory(value: bytes) -> List[str]:
     return value.decode("utf-8", "replace").split(",") if value else []
 
 
-def decode_open_file(value: bytes) -> Tuple[int, int]:
-    """File key and size."""
-    return struct.unpack("<II", value)
+class FileCommand(IntEnum):
+    START_UPLOAD = 1
+    START_DOWNLOAD = 2
+    REPLY = 3
+    STOP = 4
 
 
-def decode_file_data(value: bytes) -> Tuple[int, bytes]:
-    """Position and bytes."""
-    return struct.unpack_from("<I", value)[0], value[4:]
+class CommandStatus(IntEnum):
+    ACCEPTED = 0
+    INVALID = 1
+    UNAVAILABLE = 2
+
+
+class SectorStatus(IntEnum):
+    OK = 0
+    CRC_ERROR = 1
+    INDEX_ERROR = 2
+    WRITE_ERROR = 3
+
+
+class CommandReply(NamedTuple):
+    command: int
+    status: int
+    values: bytes
+
+
+class SectorAcknowledgement(NamedTuple):
+    sector: int
+    status: int
+    next_sector: int
+
+
+def crc16(data: bytes) -> int:
+    """CRC-16/XMODEM, as Espressif's ble_ota."""
+    return binascii.crc_hqx(data, 0)
+
+
+def with_crc(body: bytes) -> bytes:
+    return body + struct.pack("<H", crc16(body))
+
+
+def without_crc(frame: bytes) -> Optional[bytes]:
+    """The frame's body, or None when its CRC does not match."""
+    if len(frame) < 2 or struct.unpack_from("<H", frame, len(frame) - 2)[0] != crc16(frame[:-2]):
+        return None
+    return frame[:-2]
+
+
+def encode_start_upload(size: int, path: str) -> bytes:
+    return with_crc(struct.pack("<HI", FileCommand.START_UPLOAD, size) + path.encode("utf-8"))
+
+
+def encode_start_download(offset: int, path: str) -> bytes:
+    """Sector 0 starts at offset; a resumed download's offset is the length already received."""
+    return with_crc(struct.pack("<HI", FileCommand.START_DOWNLOAD, offset) + path.encode("utf-8"))
+
+
+def encode_stop() -> bytes:
+    return with_crc(struct.pack("<H", FileCommand.STOP))
+
+
+def decode_command_reply(frame: bytes) -> Optional[CommandReply]:
+    body = without_crc(frame)
+    if body is None or len(body) < 6 or struct.unpack_from("<H", body)[0] != FileCommand.REPLY:
+        return None
+    command, status = struct.unpack_from("<HH", body, 2)
+    return CommandReply(command, status, body[6:])
+
+
+def encode_acknowledgement(sector: int, status: SectorStatus, next_sector: int) -> bytes:
+    return with_crc(struct.pack("<HHH", sector, status, next_sector))
+
+
+def decode_acknowledgement(frame: bytes) -> Optional[SectorAcknowledgement]:
+    body = without_crc(frame)
+    return SectorAcknowledgement(*struct.unpack("<HHH", body)) if body and len(body) == 6 else None
+
+
+def encode_sector(sector: int, data: bytes, chunk_size: int) -> List[bytes]:
+    """The packets of a sector: chunk_size bytes each of data and its CRC."""
+    blob = with_crc(data)
+    chunks = [blob[offset:offset + chunk_size] for offset in range(0, len(blob), chunk_size)]
+    return [struct.pack("<HB", sector, LAST_PACKET if i == len(chunks) - 1 else i) + chunk
+            for i, chunk in enumerate(chunks)]
+
+
+def decode_packet(packet: bytes) -> Tuple[int, int, bytes]:
+    """Sector, sequence number, bytes."""
+    sector, sequence = struct.unpack_from("<HB", packet)
+    return sector, sequence, packet[PACKET_HEADER_SIZE:]
 
 
 def encode_set(property: Property, value) -> bytes:

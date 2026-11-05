@@ -204,9 +204,19 @@ class MonitorWindow(QWidget):
             self.log("list and pick a recording first")
             return
         name = item.text()
-        output, _ = QFileDialog.getSaveFileName(self, "Save recording", name)
+        output, _ = QFileDialog.getSaveFileName(
+            self, "Save recording", name, options=QFileDialog.DontConfirmOverwrite)
         if not output:
             return
+        resume = False
+        if Path(output).exists():
+            answer = QMessageBox.question(
+                self, "Download", f"{Path(output).name} exists. Resume an interrupted download "
+                "of it? No downloads it again.",
+                QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel)
+            if answer == QMessageBox.Cancel:
+                return
+            resume = answer == QMessageBox.Yes
         self.log(f"downloading {name}")
         dialog = QProgressDialog(f"Downloading {name}…", "Cancel", 0, 1, self)
         dialog.setWindowTitle("Download")
@@ -218,19 +228,19 @@ class MonitorWindow(QWidget):
         dialog.setValue(0)
         dialog.download_name = name
         dialog.start_time = time.monotonic()
+        dialog.start_offset = Path(output).stat().st_size if resume else 0
         self.download_dialog = dialog
 
-        def save(data):
-            Path(output).write_bytes(data)
-            self.log(f"saved {len(data)} bytes to {output}")
+        def saved(size):
+            self.log(f"saved {size} bytes to {output}")
 
         def close_dialog():
             dialog.close()
             self.download_dialog = None
 
         future = self.run(self.client.download(f"{protocol.RECORDING_DIRECTORY}/{name}",
-                                               self.download_progress.emit),
-                          save, on_finished=close_dialog)
+                                               Path(output), resume, self.download_progress.emit),
+                          saved, on_finished=close_dialog)
         dialog.canceled.connect(future.cancel)
 
     def show_download_progress(self, received, size):
@@ -239,7 +249,8 @@ class MonitorWindow(QWidget):
             return
         dialog.setMaximum(max(size, 1))
         dialog.setValue(received)
-        rate = received / max(time.monotonic() - dialog.start_time, 1e-3) / 1024
+        rate = ((received - dialog.start_offset)
+                / max(time.monotonic() - dialog.start_time, 1e-3) / 1024)
         dialog.setLabelText(f"Downloading {dialog.download_name}\n"
                             f"{received / 1024:.1f} of {size / 1024:.1f} KB, {rate:.1f} KB/s")
 
