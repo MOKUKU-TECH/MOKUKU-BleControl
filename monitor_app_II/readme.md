@@ -46,6 +46,9 @@ python monitor_app_II/cli.py scan
 python monitor_app_II/cli.py get version mac_address sd_card wake_word_model multinet_language
 python monitor_app_II/cli.py set wifi_name Home
 python monitor_app_II/cli.py set obd_enabled off
+python monitor_app_II/cli.py set firmware_update   # after wifi_name, wifi_password, remote_address
+python monitor_app_II/cli.py get firmware_update   # the last failed update's reason
+python monitor_app_II/cli.py set rollback          # back to the previous firmware
 python monitor_app_II/cli.py data 60 2400 75 --command none
 python monitor_app_II/cli.py ls                      # /sdcard/record by default
 python monitor_app_II/cli.py download /sdcard/record/mobili_1.record --output mobili_1.record

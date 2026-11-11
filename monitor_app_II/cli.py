@@ -6,6 +6,9 @@
     python cli.py get version sd_card
     python cli.py set wifi_name Home
     python cli.py set obd_enabled 0
+    python cli.py set firmware_update        # reboot, download the firmware over Wi-Fi, reboot
+    python cli.py get firmware_update        # the last failed update's reason
+    python cli.py set rollback               # reboot into the previous firmware
     python cli.py data 60 2400 75 [--command reboot]
     python cli.py ls [/sdcard/record]
     python cli.py download /sdcard/record/mobili_1.record [--output mobili_1.record] [--resume]
@@ -38,6 +41,8 @@ def parse_property(name: str) -> Property:
 def parse_set_value(property: Property, text: str):
     if property == Property.OBD_ENABLED:
         return text.lower() in ("1", "on", "true")
+    if property in protocol.ACTION_PROPERTIES:
+        return None
     return text
 
 
@@ -66,7 +71,7 @@ def main() -> int:
     get_parser.add_argument("properties", nargs="+", type=parse_property)
     set_parser = commands.add_parser("set")
     set_parser.add_argument("property", type=parse_property)
-    set_parser.add_argument("value")
+    set_parser.add_argument("value", nargs="?", default="")
     data_parser = commands.add_parser("data")
     data_parser.add_argument("speed_kmh", type=int)
     data_parser.add_argument("rpm", type=int)

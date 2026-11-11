@@ -39,6 +39,8 @@ class Property(IntEnum):
     MULTINET_LANGUAGE = 9
     DIRECTORY = 10
     DELETE_RECORDINGS = 13
+    FIRMWARE_UPDATE = 200
+    ROLLBACK = 201
 
 
 class Result(IntEnum):
@@ -58,6 +60,8 @@ class Command(IntEnum):
 
 
 STRING_PROPERTIES = (Property.WIFI_NAME, Property.WIFI_PASSWORD, Property.REMOTE_ADDRESS)
+# Set without a value; firmware update and rollback reboot the device after the reply.
+ACTION_PROPERTIES = (Property.DELETE_RECORDINGS, Property.FIRMWARE_UPDATE, Property.ROLLBACK)
 
 
 class Reply(NamedTuple):
@@ -173,14 +177,14 @@ def decode_packet(packet: bytes) -> Tuple[int, int, bytes]:
 
 
 def encode_set(property: Property, value) -> bytes:
-    """Strings for the text properties, bool for OBD enabled, None for delete recordings."""
+    """Strings for the text properties, bool for OBD enabled, None for the action properties."""
     if property in STRING_PROPERTIES:
         encoded = value.encode("utf-8")
         if not 1 <= len(encoded) <= STRING_MAX_LENGTH:
             raise ValueError(f"{property.name} must be 1-{STRING_MAX_LENGTH} bytes")
     elif property == Property.OBD_ENABLED:
         encoded = bytes([1 if value else 0])
-    elif property == Property.DELETE_RECORDINGS:
+    elif property in ACTION_PROPERTIES:
         encoded = b""
     else:
         raise ValueError(f"{property.name} is read-only")
