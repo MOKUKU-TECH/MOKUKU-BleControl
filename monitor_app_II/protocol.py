@@ -41,7 +41,9 @@ class Property(IntEnum):
     DELETE_RECORDINGS = 13
     PANELS = 14
     PANEL_ACTION = 15
-    ROLLBACK = 200  # no value: the device reboots into its other firmware slot
+    FIRMWARE_SLOTS = 16  # text, a line per OTA slot: version, build time, running, boots next
+    ROLLBACK = 200  # no value: the device reboots into its other slot's older firmware
+    SWITCH_SLOT = 201  # no value: as rollback, whatever the firmware's build time
 
 
 class Result(IntEnum):
@@ -242,7 +244,7 @@ def encode_set(property: Property, value) -> bytes:
             raise ValueError(f"{property.name} must be 1-{STRING_MAX_LENGTH} bytes")
     elif property == Property.OBD_ENABLED:
         encoded = bytes([1 if value else 0])
-    elif property in (Property.DELETE_RECORDINGS, Property.ROLLBACK):
+    elif property in (Property.DELETE_RECORDINGS, Property.ROLLBACK, Property.SWITCH_SLOT):
         encoded = b""
     elif property == Property.PANELS:
         encoded = encode_panels(*value)
@@ -282,6 +284,8 @@ def describe_value(property: int, value: bytes) -> str:
             return value.hex(" ")
         return "; ".join(f"{eye}: {', '.join(map(panel_name, panels))}"
                          for eye, panels in zip(EYES, lists))
+    if property == Property.FIRMWARE_SLOTS:
+        return "".join(f"\n  {line}" for line in value.decode("utf-8", "replace").splitlines())
     if property == Property.MULTINET_LANGUAGE:
         language = value.decode("utf-8", "replace")
         return {"cn": "Mandarin (cn)", "en": "English (en)"}.get(language, language)

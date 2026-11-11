@@ -99,12 +99,53 @@ class FirmwareDialog(QDialog):
         layout.addLayout(update_row)
 
         layout.addWidget(monitor.horizontal_line())
-        layout.addWidget(theme.section_label("Rollback"))
-        layout.addWidget(theme.hint_label("Restarts into the firmware in the device's other slot."))
+        layout.addWidget(theme.section_label("Firmware Slots"))
+        self.slots_list = QListWidget()
+        self.slots_list.setFont(theme.monospace_font(9))
+        self.slots_list.setFixedHeight(64)
+        layout.addWidget(self.slots_list)
+        self.refresh_button = QPushButton("Refresh")
+        self.refresh_button.clicked.connect(self.refresh_slots)
+        layout.addWidget(self.refresh_button)
+
+        layout.addWidget(monitor.horizontal_line())
+        layout.addWidget(theme.section_label("Other Slot"))
+        slot_hint = theme.hint_label("Restarts into the firmware in the device's other slot: "
+                                     "Rollback only if it is older, Switch Slot always.")
+        slot_hint.setWordWrap(True)
+        layout.addWidget(slot_hint)
+        slot_row = QHBoxLayout()
         self.rollback_button = QPushButton("Rollback…")
-        self.rollback_button.clicked.connect(self.rollback)
-        layout.addWidget(self.rollback_button)
+        self.rollback_button.clicked.connect(
+            lambda: self.change_slot("Rollback", "Restart the device into the older firmware in "
+                                     "its other slot?", self.monitor.client.rollback))
+        self.switch_button = QPushButton("Switch Slot…")
+        self.switch_button.clicked.connect(
+            lambda: self.change_slot("Switch Slot", "Restart the device into the firmware in its "
+                                     "other slot, even if it is newer?",
+                                     self.monitor.client.switch_slot))
+        slot_row.addWidget(self.rollback_button)
+        slot_row.addWidget(self.switch_button)
+        layout.addLayout(slot_row)
         self.progress.connect(self.show_progress)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if self.future is None:
+            self.refresh_slots()
+
+    def refresh_slots(self):
+        if not self.monitor.client.connected:
+            self.slots_list.clear()
+            self.slots_list.addItem("Connect to a device first.")
+            return
+
+        def show_slots(lines):
+            self.slots_list.clear()
+            self.slots_list.addItems(lines or ["No OTA slots."])
+            self.monitor.log(f"firmware slots read: {len(lines)}")
+
+        self.monitor.run(self.monitor.client.firmware_slots(), show_slots)
 
     def browse(self):
         start = self.path_field.text() or str(FIRMWARE_DIRECTORY)
@@ -115,7 +156,7 @@ class FirmwareDialog(QDialog):
 
     def set_running(self, running):
         for widget in (self.path_field, self.browse_button, self.update_button,
-                       self.rollback_button):
+                       self.rollback_button, self.switch_button, self.refresh_button):
             widget.setEnabled(not running)
         self.cancel_button.setEnabled(running)
 
@@ -160,20 +201,18 @@ class FirmwareDialog(QDialog):
         if self.future:
             self.future.cancel()
 
-    def rollback(self):
+    def change_slot(self, title, question, request):
         if not self.monitor.client.connected:
             self.status_label.setText("Connect to a device first.")
             return
-        answer = QMessageBox.question(self, "Rollback",
-                                      "Restart the device into the firmware in its other slot?")
-        if answer != QMessageBox.Yes:
+        if QMessageBox.question(self, title, question) != QMessageBox.Yes:
             return
 
-        def rolled_back(_):
-            self.status_label.setText("Rolling back; the device restarts.")
-            self.monitor.log("rolling back; the device restarts")
+        def changed(_):
+            self.status_label.setText(f"{title}: the device restarts.")
+            self.monitor.log(f"{title.lower()}: the device restarts")
 
-        self.monitor.run(self.monitor.client.rollback(), rolled_back)
+        self.monitor.run(request(), changed)
 
     def closeEvent(self, event):
         # Closing stops a running update; the device then restarts into its old firmware.

@@ -13,7 +13,9 @@
     python cli.py download /sdcard/record/mobili_1.record [--output mobili_1.record] [--resume]
     python cli.py upload firmware.bin /sdcard/firmware.bin
     python cli.py update IDF_MOKUKU_II_prototype.bin
+    python cli.py get firmware_slots
     python cli.py rollback --yes
+    python cli.py switch-slot --yes
     python cli.py delete-recordings --yes
 
 Without --address, it connects to the strongest mokukuii* device found. Ctrl-C stops a transfer on
@@ -106,7 +108,10 @@ def main() -> int:
     update_parser.add_argument("source", type=Path, help="firmware image, the build's app .bin")
     rollback_parser = commands.add_parser("rollback")
     rollback_parser.add_argument("--yes", action="store_true", required=True,
-                                 help="confirm rebooting into the previous firmware")
+                                 help="confirm rebooting into the other slot's older firmware")
+    switch_parser = commands.add_parser("switch-slot")
+    switch_parser.add_argument("--yes", action="store_true", required=True,
+                               help="confirm rebooting into the other slot's firmware, older or not")
     delete_parser = commands.add_parser("delete-recordings")
     delete_parser.add_argument("--yes", action="store_true", required=True,
                                help="confirm deleting every file in /sdcard/record")
@@ -176,6 +181,9 @@ def main() -> int:
         elif arguments.action == "rollback":
             run(client.rollback())
             print("rolling back; the device restarts")
+        elif arguments.action == "switch-slot":
+            run(client.switch_slot())
+            print("switching slots; the device restarts")
         elif arguments.action == "delete-recordings":
             run(client.delete_recordings())
             print("recordings deleted")

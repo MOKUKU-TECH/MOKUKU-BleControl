@@ -172,9 +172,21 @@ class MokukuIIClient:
         """Deletes every file in /sdcard/record; refused while recording."""
         await self.checked_request(protocol.encode_set(Property.DELETE_RECORDINGS, None))
 
+    async def firmware_slots(self) -> List[str]:
+        """A line per OTA slot: its firmware's version and build time, and whether it runs or
+        boots next."""
+        value = await self.checked_request(protocol.encode_get(Property.FIRMWARE_SLOTS))
+        return value.decode("utf-8", "replace").splitlines()
+
     async def rollback(self) -> None:
-        """Reboots the device into its other firmware slot; refused when that slot holds none."""
+        """Reboots the device into its other slot's firmware; refused unless it is valid and was
+        built earlier than the running firmware."""
         await self.checked_request(protocol.encode_set(Property.ROLLBACK, None))
+
+    async def switch_slot(self) -> None:
+        """Reboots the device into its other slot's firmware, whatever its build time; refused when
+        that slot holds no valid firmware."""
+        await self.checked_request(protocol.encode_set(Property.SWITCH_SLOT, None))
 
     @contextlib.asynccontextmanager
     async def file_transfer(self):
