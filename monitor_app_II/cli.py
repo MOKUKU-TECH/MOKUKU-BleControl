@@ -7,6 +7,7 @@
     python cli.py set wifi_name Home
     python cli.py set obd_enabled 0
     python cli.py set panels speed,rpm,gravity,pitch_roll,clock fuel,trip_distance,driving_time,route,music
+    python cli.py set panel_action next_left|next_right|toggle_mode
     python cli.py data 60 2400 75 [--command reboot]
     python cli.py ls [/sdcard/record]
     python cli.py download /sdcard/record/mobili_1.record [--output mobili_1.record] [--resume]
@@ -43,6 +44,12 @@ def parse_set_value(property: Property, words):
             raise ValueError("set panels LEFT RIGHT, each a comma-separated list")
         return [protocol.parse_panels(text) for text in words]
     text = " ".join(words)
+    if property == Property.PANEL_ACTION:
+        try:
+            return protocol.PanelAction[text.upper()]
+        except KeyError:
+            raise ValueError(f"panel action is one of "
+                             f"{', '.join(a.name.lower() for a in protocol.PanelAction)}") from None
     if property == Property.OBD_ENABLED:
         return text.lower() in ("1", "on", "true")
     return text

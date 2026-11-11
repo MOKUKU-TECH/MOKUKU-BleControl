@@ -35,7 +35,7 @@ import theme  # noqa: E402
 
 import protocol  # noqa: E402
 from ble_client import MokukuIIClient  # noqa: E402
-from protocol import Command, PanelType, Property, Result  # noqa: E402
+from protocol import Command, PanelAction, PanelType, Property, Result  # noqa: E402
 
 INFO_LABELS = {
     Property.VERSION: "MOKUKU version",
@@ -181,6 +181,20 @@ class MonitorWindow(QWidget):
                 boxes.append(box)
             self.panel_boxes.append(boxes)
         layout.addLayout(self.setting_row(Property.PANELS, grid_widget))
+        row = QHBoxLayout()
+        for text, action in (("Left Next", PanelAction.NEXT_LEFT),
+                             ("Right Next", PanelAction.NEXT_RIGHT),
+                             ("Data / Meme", PanelAction.TOGGLE_MODE)):
+            button = QPushButton(text)
+            button.clicked.connect(lambda _, action=action: self.panel_action(action))
+            row.addWidget(button)
+            self.connected_widgets.append(button)
+        layout.addLayout(row)
+
+    def panel_action(self, action):
+        self.run(self.client.set(Property.PANEL_ACTION, action),
+                 lambda reply: self.log(f"{action.name.lower()}: "
+                                        f"{protocol.describe_result(reply.result)}"))
 
     def add_recordings_section(self, layout):
         layout.addWidget(theme.section_label(f"Recordings ({protocol.RECORDING_DIRECTORY})"))

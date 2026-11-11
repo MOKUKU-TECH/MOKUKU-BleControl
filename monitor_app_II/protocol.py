@@ -40,6 +40,7 @@ class Property(IntEnum):
     DIRECTORY = 10
     DELETE_RECORDINGS = 13
     PANELS = 14
+    PANEL_ACTION = 15
 
 
 class Result(IntEnum):
@@ -73,6 +74,12 @@ class PanelType(IntEnum):
     ROUTE = 8
     CLOCK = 9
     MUSIC = 10
+
+
+class PanelAction(IntEnum):
+    NEXT_LEFT = 1  # in meme mode, both eyes return to their data panels
+    NEXT_RIGHT = 2
+    TOGGLE_MODE = 3  # memes or data, both eyes
 
 
 PANELS_PER_EYE = 5
@@ -222,7 +229,7 @@ def decode_packet(packet: bytes) -> Tuple[int, int, bytes]:
 
 def encode_set(property: Property, value) -> bytes:
     """Strings for the text properties, bool for OBD enabled, None for delete recordings, and
-    (left, right) panel lists for panels."""
+    (left, right) panel lists for panels, a PanelAction for panel action."""
     if property in STRING_PROPERTIES:
         encoded = value.encode("utf-8")
         if not 1 <= len(encoded) <= STRING_MAX_LENGTH:
@@ -233,6 +240,8 @@ def encode_set(property: Property, value) -> bytes:
         encoded = b""
     elif property == Property.PANELS:
         encoded = encode_panels(*value)
+    elif property == Property.PANEL_ACTION:
+        encoded = bytes([PanelAction(value)])
     else:
         raise ValueError(f"{property.name} is read-only")
     return bytes([MessageType.SET, property]) + encoded
