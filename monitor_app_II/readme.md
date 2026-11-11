@@ -34,7 +34,9 @@ python monitor_app_II/app.py
 
 Scan, pick a `mokukuii*` device, and connect. The app then reads the MOKUKU version, MAC address,
 SD card space, wake word model, command language, and settings. Settings (Wi-Fi name and password, remote address, OBD scanning)
-each have **Get** and **Set**. **Send** writes one dashboard data packet; **Reboot** sends the
+each have **Get** and **Set**. Under Panels, pick each eye's 5 data panels in next-page order
+(memes are always shown as well); **Get** reads them (also on connecting) and **Set** applies
+them to both eyes. **Send** writes one dashboard data packet; **Reboot** sends the
 reboot command. Under Recordings, **List** reads the names in `/sdcard/record`, **Download**
 saves the selected recording (a window shows its progress and rate; **Cancel** stops it, keeping
 the bytes received; saving over that file again offers to resume), and **Delete All** deletes every recording after a confirmation.
@@ -46,6 +48,8 @@ python monitor_app_II/cli.py scan
 python monitor_app_II/cli.py get version mac_address sd_card wake_word_model multinet_language
 python monitor_app_II/cli.py set wifi_name Home
 python monitor_app_II/cli.py set obd_enabled off
+python monitor_app_II/cli.py get panels
+python monitor_app_II/cli.py set panels speed,rpm,gravity,pitch_roll,clock fuel,trip_distance,driving_time,route,music
 python monitor_app_II/cli.py data 60 2400 75 --command none
 python monitor_app_II/cli.py ls                      # /sdcard/record by default
 python monitor_app_II/cli.py download /sdcard/record/mobili_1.record --output mobili_1.record
