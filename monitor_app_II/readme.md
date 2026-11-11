@@ -58,9 +58,14 @@ python monitor_app_II/cli.py download /sdcard/record/mobili_1.record --output mo
 python monitor_app_II/cli.py download /sdcard/record/mobili_1.record --output mobili_1.record --resume
 python monitor_app_II/cli.py upload firmware.bin /sdcard/firmware.bin   # replaces an existing file
 python monitor_app_II/cli.py delete-recordings --yes
+python monitor_app_II/cli.py update IDF_MOKUKU_II_prototype.bin   # the app image from output/
+python monitor_app_II/cli.py rollback --yes                       # back to the previous firmware
 ```
 
 Without `--address`, the CLI connects to the strongest `mokukuii*` device.
+
+`update` sends the firmware like an upload; the device writes it to its other slot and restarts
+into it, or after a failure (including Ctrl-C) restarts into the old firmware.
 
 Ctrl-C stops a transfer on the device as well. An interrupted download keeps the bytes received;
 `--resume` continues after them once the device confirms by CRC that they match its file.

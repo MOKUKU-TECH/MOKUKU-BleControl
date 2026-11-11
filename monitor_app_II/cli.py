@@ -12,6 +12,8 @@
     python cli.py ls [/sdcard/record]
     python cli.py download /sdcard/record/mobili_1.record [--output mobili_1.record] [--resume]
     python cli.py upload firmware.bin /sdcard/firmware.bin
+    python cli.py update IDF_MOKUKU_II_prototype.bin
+    python cli.py rollback --yes
     python cli.py delete-recordings --yes
 
 Without --address, it connects to the strongest mokukuii* device found. Ctrl-C stops a transfer on
@@ -55,6 +57,10 @@ def parse_set_value(property: Property, words):
     return text
 
 
+def print_progress(done: int, size: int) -> None:
+    print(f"\r{done}/{size} bytes", end="", flush=True)
+
+
 def transfer_rate(size: int, started: float) -> str:
     seconds = time.monotonic() - started
     return f" in {seconds:.1f} s, {size / 1024 / seconds:.1f} KB/s" if seconds > 0 else ""
@@ -96,6 +102,11 @@ def main() -> int:
     upload_parser = commands.add_parser("upload")
     upload_parser.add_argument("source", type=Path, help="local file")
     upload_parser.add_argument("path", help="device path under /sdcard; replaced when it exists")
+    update_parser = commands.add_parser("update", help="replace the firmware; the device restarts")
+    update_parser.add_argument("source", type=Path, help="firmware image, the build's app .bin")
+    rollback_parser = commands.add_parser("rollback")
+    rollback_parser.add_argument("--yes", action="store_true", required=True,
+                                 help="confirm rebooting into the previous firmware")
     delete_parser = commands.add_parser("delete-recordings")
     delete_parser.add_argument("--yes", action="store_true", required=True,
                                help="confirm deleting every file in /sdcard/record")
@@ -148,16 +159,23 @@ def main() -> int:
                 print(name)
         elif arguments.action == "download":
             output = Path(arguments.output or Path(arguments.path).name)
-            show = lambda received, size: print(f"\r{received}/{size} bytes", end="", flush=True)
             started = time.monotonic()
-            transferred = run(client.download(arguments.path, output, arguments.resume, show))
+            transferred = run(client.download(arguments.path, output, arguments.resume,
+                                              print_progress))
             print(f"\nsaved {output}{transfer_rate(transferred, started)}")
         elif arguments.action == "upload":
             data = arguments.source.read_bytes()
-            show = lambda sent, size: print(f"\r{sent}/{size} bytes", end="", flush=True)
             started = time.monotonic()
-            run(client.upload(arguments.path, data, show))
+            run(client.upload(arguments.path, data, print_progress))
             print(f"\nuploaded {arguments.path}{transfer_rate(len(data), started)}")
+        elif arguments.action == "update":
+            data = arguments.source.read_bytes()
+            started = time.monotonic()
+            run(client.update_firmware(data, print_progress))
+            print(f"\nfirmware installed{transfer_rate(len(data), started)}; the device restarts")
+        elif arguments.action == "rollback":
+            run(client.rollback())
+            print("rolling back; the device restarts")
         elif arguments.action == "delete-recordings":
             run(client.delete_recordings())
             print("recordings deleted")

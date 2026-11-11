@@ -41,6 +41,7 @@ class Property(IntEnum):
     DELETE_RECORDINGS = 13
     PANELS = 14
     PANEL_ACTION = 15
+    ROLLBACK = 200  # no value: the device reboots into its other firmware slot
 
 
 class Result(IntEnum):
@@ -140,6 +141,7 @@ class FileCommand(IntEnum):
     START_DOWNLOAD = 2
     REPLY = 3
     STOP = 4
+    START_FIRMWARE_UPDATE = 200
 
 
 class CommandStatus(IntEnum):
@@ -185,6 +187,10 @@ def without_crc(frame: bytes) -> Optional[bytes]:
 
 def encode_start_upload(size: int, path: str) -> bytes:
     return with_crc(struct.pack("<HI", FileCommand.START_UPLOAD, size) + path.encode("utf-8"))
+
+
+def encode_start_firmware_update(size: int) -> bytes:
+    return with_crc(struct.pack("<HI", FileCommand.START_FIRMWARE_UPDATE, size))
 
 
 def encode_start_download(offset: int, path: str) -> bytes:
@@ -236,7 +242,7 @@ def encode_set(property: Property, value) -> bytes:
             raise ValueError(f"{property.name} must be 1-{STRING_MAX_LENGTH} bytes")
     elif property == Property.OBD_ENABLED:
         encoded = bytes([1 if value else 0])
-    elif property == Property.DELETE_RECORDINGS:
+    elif property in (Property.DELETE_RECORDINGS, Property.ROLLBACK):
         encoded = b""
     elif property == Property.PANELS:
         encoded = encode_panels(*value)
