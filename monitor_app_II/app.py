@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Copyright 2026 MOKUKU Inc. All rights reserved.
-"""MOKUKU II monitor: scan, connect, read device info, edit settings, download recordings, and send
-dashboard data."""
+"""MOKUKU II monitor: scan, connect, read device info, edit settings, download recordings, send
+dashboard data, and update the firmware."""
 import sys
 import time
 from pathlib import Path
@@ -12,6 +12,7 @@ from PyQt5.QtWidgets import (
     QApplication,
     QCheckBox,
     QComboBox,
+    QDialog,
     QFileDialog,
     QFormLayout,
     QFrame,
@@ -22,6 +23,7 @@ from PyQt5.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMessageBox,
+    QProgressBar,
     QProgressDialog,
     QPushButton,
     QTextEdit,
@@ -51,6 +53,136 @@ TEXT_SETTING_LABELS = {
 }
 # (label, maximum, default)
 DATA_FIELDS = (("Speed km/h", 255, 60), ("RPM", 16383, 2400), ("Fuel %", 100, 75))
+# Where build_idf.sh writes the app image.
+FIRMWARE_DIRECTORY = Path(__file__).resolve().parents[2] / "IDF_MOKUKU_II_prototype" / "output"
+
+
+class FirmwareDialog(QDialog):
+    """Sends a firmware image into the device's other slot with a progress bar, or rolls back to the
+    firmware in that slot. Either way the device restarts."""
+    progress = pyqtSignal(int, int)
+
+    def __init__(self, monitor):
+        super().__init__(monitor)
+        self.monitor = monitor
+        self.future = None
+        self.setWindowTitle("Firmware Update")
+        self.setMinimumWidth(520)
+        layout = QVBoxLayout(self)
+        layout.setSpacing(10)
+
+        layout.addWidget(theme.section_label("Update"))
+        file_row = QHBoxLayout()
+        self.path_field = QLineEdit(placeholderText="App image (.bin), for example "
+                                                    "IDF_MOKUKU_II_prototype.bin")
+        self.browse_button = QPushButton("Browse…")
+        self.browse_button.clicked.connect(self.browse)
+        file_row.addWidget(self.path_field, stretch=1)
+        file_row.addWidget(self.browse_button)
+        layout.addLayout(file_row)
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setRange(0, 1)
+        self.progress_bar.setValue(0)
+        layout.addWidget(self.progress_bar)
+        self.status_label = theme.hint_label("Both eyes show the update's progress; the device "
+                                             "restarts when it ends.")
+        self.status_label.setWordWrap(True)
+        layout.addWidget(self.status_label)
+        update_row = QHBoxLayout()
+        self.update_button = QPushButton("Update")
+        self.update_button.clicked.connect(self.start_update)
+        self.cancel_button = QPushButton("Cancel")
+        self.cancel_button.clicked.connect(self.cancel_update)
+        self.cancel_button.setEnabled(False)
+        update_row.addWidget(self.update_button)
+        update_row.addWidget(self.cancel_button)
+        layout.addLayout(update_row)
+
+        layout.addWidget(monitor.horizontal_line())
+        layout.addWidget(theme.section_label("Rollback"))
+        layout.addWidget(theme.hint_label("Restarts into the firmware in the device's other slot."))
+        self.rollback_button = QPushButton("Rollback…")
+        self.rollback_button.clicked.connect(self.rollback)
+        layout.addWidget(self.rollback_button)
+        self.progress.connect(self.show_progress)
+
+    def browse(self):
+        start = self.path_field.text() or str(FIRMWARE_DIRECTORY)
+        path, _ = QFileDialog.getOpenFileName(self, "Firmware image", start,
+                                              "App images (*.bin);;All files (*)")
+        if path:
+            self.path_field.setText(path)
+
+    def set_running(self, running):
+        for widget in (self.path_field, self.browse_button, self.update_button,
+                       self.rollback_button):
+            widget.setEnabled(not running)
+        self.cancel_button.setEnabled(running)
+
+    def start_update(self):
+        path = Path(self.path_field.text().strip())
+        if not path.is_file():
+            self.status_label.setText("Pick a firmware image first.")
+            return
+        if not self.monitor.client.connected:
+            self.status_label.setText("Connect to a device first.")
+            return
+        data = path.read_bytes()
+        self.monitor.log(f"updating the firmware with {path.name}, {len(data)} bytes")
+        self.progress_bar.setRange(0, max(len(data), 1))
+        self.progress_bar.setValue(0)
+        self.status_label.setText(f"Sending {path.name}…")
+        self.start_time = time.monotonic()
+        self.set_running(True)
+
+        def installed(_):
+            seconds = time.monotonic() - self.start_time
+            self.status_label.setText(f"Installed in {seconds:.1f} s; the device restarts into it.")
+            self.monitor.log("firmware installed; the device restarts")
+
+        def finished():
+            self.future = None
+            self.set_running(False)
+            if self.progress_bar.value() < self.progress_bar.maximum():
+                self.status_label.setText("Stopped or failed: the device shows why, then restarts "
+                                          "into its old firmware. See the activity log.")
+
+        self.future = self.monitor.run(self.monitor.client.update_firmware(data, self.progress.emit),
+                                       installed, on_finished=finished)
+
+    def show_progress(self, sent, size):
+        self.progress_bar.setValue(sent)
+        rate = sent / max(time.monotonic() - self.start_time, 1e-3) / 1024
+        self.status_label.setText(f"{sent / 1048576:.2f} of {size / 1048576:.2f} MB, "
+                                  f"{sent * 100 // max(size, 1)}%, {rate:.1f} KB/s")
+
+    def cancel_update(self):
+        if self.future:
+            self.future.cancel()
+
+    def rollback(self):
+        if not self.monitor.client.connected:
+            self.status_label.setText("Connect to a device first.")
+            return
+        answer = QMessageBox.question(self, "Rollback",
+                                      "Restart the device into the firmware in its other slot?")
+        if answer != QMessageBox.Yes:
+            return
+
+        def rolled_back(_):
+            self.status_label.setText("Rolling back; the device restarts.")
+            self.monitor.log("rolling back; the device restarts")
+
+        self.monitor.run(self.monitor.client.rollback(), rolled_back)
+
+    def closeEvent(self, event):
+        # Closing stops a running update; the device then restarts into its old firmware.
+        self.cancel_update()
+        super().closeEvent(event)
+
+    def reject(self):
+        if self.future is None:
+            super().reject()
 
 
 class MonitorWindow(QWidget):
@@ -67,6 +199,7 @@ class MonitorWindow(QWidget):
         self.download_dialog = None
         self.download_progress.connect(self.show_download_progress)
         self.connected_widgets = []
+        self.firmware_dialog = FirmwareDialog(self)
 
         self.setWindowTitle("MOKUKU II Monitor")
         self.setGeometry(300, 300, 620, 980)
@@ -308,10 +441,13 @@ class MonitorWindow(QWidget):
         send_button.clicked.connect(lambda: self.send_data(Command.NONE))
         reboot_button = QPushButton("Reboot")
         reboot_button.clicked.connect(lambda: self.send_data(Command.REBOOT))
+        firmware_button = QPushButton("Firmware…")
+        firmware_button.clicked.connect(self.firmware_dialog.show)
         button_row.addWidget(send_button)
         button_row.addWidget(reboot_button)
+        button_row.addWidget(firmware_button)
         layout.addLayout(button_row)
-        self.connected_widgets += [send_button, reboot_button]
+        self.connected_widgets += [send_button, reboot_button, firmware_button]
 
     def log(self, text):
         self.log_view.append(f"{time.strftime('%H:%M:%S')}  {text}")

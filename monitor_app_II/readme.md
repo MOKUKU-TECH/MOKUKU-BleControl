@@ -38,7 +38,11 @@ each have **Get** and **Set**. Under Panels, pick each eye's 5 data panels in ne
 (memes are always shown as well); **Get** reads them (also on connecting) and **Set** applies
 them to both eyes. **Left Next** and **Right Next** move one eye to its next panel (from memes,
 both eyes return to their data panels), and **Data / Meme** switches both eyes between modes. **Send** writes one dashboard data packet; **Reboot** sends the
-reboot command. Under Recordings, **List** reads the names in `/sdcard/record`, **Download**
+reboot command; **Firmware…** opens the firmware update window: pick the app image
+(`IDF_MOKUKU_II_prototype.bin` from `IDF_MOKUKU_II_prototype/output/`) and **Update** sends it with a
+progress bar, after which the device restarts into it; **Cancel** (or closing the window) stops it, and
+the device restarts into its old firmware; **Rollback…** restarts the device into the firmware in its
+other slot. Under Recordings, **List** reads the names in `/sdcard/record`, **Download**
 saves the selected recording (a window shows its progress and rate; **Cancel** stops it, keeping
 the bytes received; saving over that file again offers to resume), and **Delete All** deletes every recording after a confirmation.
 
