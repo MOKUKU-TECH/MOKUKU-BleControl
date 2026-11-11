@@ -38,7 +38,12 @@ each have **Get** and **Set**. Under Panels, pick each eye's 5 data panels in ne
 (memes are always shown as well); **Get** reads them (also on connecting) and **Set** applies
 them to both eyes. **Left Next** and **Right Next** move one eye to its next panel (from memes,
 both eyes return to their data panels), and **Data / Meme** switches both eyes between modes. **Send** writes one dashboard data packet; **Reboot** sends the
-reboot command. Under Recordings, **List** reads the names in `/sdcard/record`, **Download**
+reboot command; **Firmware…** opens the firmware update window: pick the app image
+(`IDF_MOKUKU_II_prototype.bin` from `IDF_MOKUKU_II_prototype/output/`) and **Update** sends it with a
+progress bar, after which the device restarts into it; **Cancel** (or closing the window) stops it, and
+the device restarts into its old firmware; **Rollback…** restarts the device into the firmware in its
+other slot if it is older, and **Switch Slot…** whatever its age. The window lists each slot's
+version and build time, and which runs and boots next; **Refresh** reads them again. Under Recordings, **List** reads the names in `/sdcard/record`, **Download**
 saves the selected recording (a window shows its progress and rate; **Cancel** stops it, keeping
 the bytes received; saving over that file again offers to resume), and **Delete All** deletes every recording after a confirmation.
 
@@ -58,9 +63,16 @@ python monitor_app_II/cli.py download /sdcard/record/mobili_1.record --output mo
 python monitor_app_II/cli.py download /sdcard/record/mobili_1.record --output mobili_1.record --resume
 python monitor_app_II/cli.py upload firmware.bin /sdcard/firmware.bin   # replaces an existing file
 python monitor_app_II/cli.py delete-recordings --yes
+python monitor_app_II/cli.py update IDF_MOKUKU_II_prototype.bin   # the app image from output/
+python monitor_app_II/cli.py get firmware_slots   # each OTA slot's version and build time
+python monitor_app_II/cli.py rollback --yes      # the other slot's firmware, only if it is older
+python monitor_app_II/cli.py switch-slot --yes   # the other slot's firmware, older or not
 ```
 
 Without `--address`, the CLI connects to the strongest `mokukuii*` device.
+
+`update` sends the firmware like an upload; the device writes it to its other slot and restarts
+into it, or after a failure (including Ctrl-C) restarts into the old firmware.
 
 Ctrl-C stops a transfer on the device as well. An interrupted download keeps the bytes received;
 `--resume` continues after them once the device confirms by CRC that they match its file.
