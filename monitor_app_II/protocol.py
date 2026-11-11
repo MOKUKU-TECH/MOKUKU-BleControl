@@ -39,6 +39,8 @@ class Property(IntEnum):
     MULTINET_LANGUAGE = 9
     DIRECTORY = 10
     DELETE_RECORDINGS = 13
+    PANELS = 14
+    PANEL_ACTION = 15
     FIRMWARE_UPDATE = 200
     ROLLBACK = 201
 
@@ -62,6 +64,59 @@ class Command(IntEnum):
 STRING_PROPERTIES = (Property.WIFI_NAME, Property.WIFI_PASSWORD, Property.REMOTE_ADDRESS)
 # Set without a value; firmware update and rollback reboot the device after the reply.
 ACTION_PROPERTIES = (Property.DELETE_RECORDINGS, Property.FIRMWARE_UPDATE, Property.ROLLBACK)
+
+
+class PanelType(IntEnum):
+    """The data panels an eye can list; memes are always shown as well."""
+    SPEED = 1
+    RPM = 2
+    GRAVITY = 3
+    PITCH_ROLL = 4
+    FUEL = 5
+    TRIP_DISTANCE = 6
+    DRIVING_TIME = 7
+    ROUTE = 8
+    CLOCK = 9
+    MUSIC = 10
+
+
+class PanelAction(IntEnum):
+    NEXT_LEFT = 1  # in meme mode, both eyes return to their data panels
+    NEXT_RIGHT = 2
+    TOGGLE_MODE = 3  # memes or data, both eyes
+
+
+PANELS_PER_EYE = 5
+EYES = ("left", "right")
+
+
+def encode_panels(left, right) -> bytes:
+    """Each eye's PANELS_PER_EYE different data panels, in "next page" order."""
+    for eye, panels in zip(EYES, (left, right)):
+        if len(panels) != PANELS_PER_EYE or len(set(panels)) != PANELS_PER_EYE:
+            raise ValueError(f"the {eye} eye needs {PANELS_PER_EYE} different panels")
+    return bytes(PanelType(panel) for panel in (*left, *right))
+
+
+def decode_panels(value: bytes) -> Tuple[List[PanelType], List[PanelType]]:
+    """Raises ValueError for a value that is not two eyes' panel types."""
+    if len(value) != len(EYES) * PANELS_PER_EYE:
+        raise ValueError(f"panels value of {len(value)} bytes")
+    panels = [PanelType(byte) for byte in value]
+    return panels[:PANELS_PER_EYE], panels[PANELS_PER_EYE:]
+
+
+def panel_name(panel: PanelType) -> str:
+    return panel.name.lower()
+
+
+def parse_panels(text: str) -> List[PanelType]:
+    """Comma-separated panel names, for example speed,rpm,gravity,pitch_roll,clock."""
+    try:
+        return [PanelType[name.strip().upper()] for name in text.split(",")]
+    except KeyError as error:
+        raise ValueError(f"unknown panel {error}; one of "
+                         f"{', '.join(map(panel_name, PanelType))}") from None
 
 
 class Reply(NamedTuple):
@@ -177,7 +232,8 @@ def decode_packet(packet: bytes) -> Tuple[int, int, bytes]:
 
 
 def encode_set(property: Property, value) -> bytes:
-    """Strings for the text properties, bool for OBD enabled, None for the action properties."""
+    """Strings for the text properties, bool for OBD enabled, None for the action properties,
+    (left, right) panel lists for panels, and a PanelAction for panel action."""
     if property in STRING_PROPERTIES:
         encoded = value.encode("utf-8")
         if not 1 <= len(encoded) <= STRING_MAX_LENGTH:
@@ -186,6 +242,10 @@ def encode_set(property: Property, value) -> bytes:
         encoded = bytes([1 if value else 0])
     elif property in ACTION_PROPERTIES:
         encoded = b""
+    elif property == Property.PANELS:
+        encoded = encode_panels(*value)
+    elif property == Property.PANEL_ACTION:
+        encoded = bytes([PanelAction(value)])
     else:
         raise ValueError(f"{property.name} is read-only")
     return bytes([MessageType.SET, property]) + encoded
@@ -213,6 +273,13 @@ def describe_value(property: int, value: bytes) -> str:
     if property == Property.SD_CARD and len(value) == 8:
         total_megabytes, free_megabytes = struct.unpack("<II", value)
         return f"{total_megabytes} MB, {free_megabytes} MB free"
+    if property == Property.PANELS:
+        try:
+            lists = decode_panels(value)
+        except ValueError:
+            return value.hex(" ")
+        return "; ".join(f"{eye}: {', '.join(map(panel_name, panels))}"
+                         for eye, panels in zip(EYES, lists))
     if property == Property.MULTINET_LANGUAGE:
         language = value.decode("utf-8", "replace")
         return {"cn": "Mandarin (cn)", "en": "English (en)"}.get(language, language)

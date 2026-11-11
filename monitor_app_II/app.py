@@ -11,9 +11,11 @@ from PyQt5.QtGui import QIntValidator
 from PyQt5.QtWidgets import (
     QApplication,
     QCheckBox,
+    QComboBox,
     QFileDialog,
     QFormLayout,
     QFrame,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -33,7 +35,7 @@ import theme  # noqa: E402
 
 import protocol  # noqa: E402
 from ble_client import MokukuIIClient  # noqa: E402
-from protocol import Command, Property, Result  # noqa: E402
+from protocol import Command, PanelAction, PanelType, Property, Result  # noqa: E402
 
 INFO_LABELS = {
     Property.VERSION: "MOKUKU version",
@@ -67,7 +69,7 @@ class MonitorWindow(QWidget):
         self.connected_widgets = []
 
         self.setWindowTitle("MOKUKU II Monitor")
-        self.setGeometry(300, 300, 520, 900)
+        self.setGeometry(300, 300, 620, 980)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(18, 18, 18, 12)
         layout.setSpacing(8)
@@ -76,6 +78,8 @@ class MonitorWindow(QWidget):
         self.add_info_section(layout)
         layout.addWidget(self.horizontal_line())
         self.add_settings_section(layout)
+        layout.addWidget(self.horizontal_line())
+        self.add_panels_section(layout)
         layout.addWidget(self.horizontal_line())
         self.add_recordings_section(layout)
         layout.addWidget(self.horizontal_line())
@@ -157,6 +161,40 @@ class MonitorWindow(QWidget):
             row.addWidget(button)
             self.connected_widgets.append(button)
         return row
+
+    def add_panels_section(self, layout):
+        layout.addWidget(theme.section_label(
+            f"Panels ({protocol.PANELS_PER_EYE} per eye in next-page order, besides memes)"))
+        grid_widget = QWidget()
+        grid = QGridLayout(grid_widget)
+        grid.setContentsMargins(0, 0, 0, 0)
+        self.panel_boxes = []
+        for row, eye in enumerate(protocol.EYES):
+            grid.addWidget(theme.hint_label(eye.capitalize()), row, 0)
+            boxes = []
+            for column in range(protocol.PANELS_PER_EYE):
+                box = QComboBox()
+                for panel in PanelType:
+                    box.addItem(protocol.panel_name(panel), panel)
+                box.setCurrentIndex(row * protocol.PANELS_PER_EYE + column)  # distinct until Get
+                grid.addWidget(box, row, column + 1)
+                boxes.append(box)
+            self.panel_boxes.append(boxes)
+        layout.addLayout(self.setting_row(Property.PANELS, grid_widget))
+        row = QHBoxLayout()
+        for text, action in (("Left Next", PanelAction.NEXT_LEFT),
+                             ("Right Next", PanelAction.NEXT_RIGHT),
+                             ("Data / Meme", PanelAction.TOGGLE_MODE)):
+            button = QPushButton(text)
+            button.clicked.connect(lambda _, action=action: self.panel_action(action))
+            row.addWidget(button)
+            self.connected_widgets.append(button)
+        layout.addLayout(row)
+
+    def panel_action(self, action):
+        self.run(self.client.set(Property.PANEL_ACTION, action),
+                 lambda reply: self.log(f"{action.name.lower()}: "
+                                        f"{protocol.describe_result(reply.result)}"))
 
     def add_recordings_section(self, layout):
         layout.addWidget(theme.section_label(f"Recordings ({protocol.RECORDING_DIRECTORY})"))
@@ -344,7 +382,7 @@ class MonitorWindow(QWidget):
             self.set_connected(True, device.name)
             self.log(f"connected to {device.name}")
             self.refresh_info()
-            for property in (*TEXT_SETTING_LABELS, Property.OBD_ENABLED):
+            for property in (*TEXT_SETTING_LABELS, Property.OBD_ENABLED, Property.PANELS):
                 self.get_setting(property)
 
         self.run(self.client.connect(device.address), connected)
@@ -369,6 +407,10 @@ class MonitorWindow(QWidget):
                 self.log(f"get {protocol.describe_failure(reply)}")
             elif property == Property.OBD_ENABLED:
                 self.obd_box.setChecked(reply.value[:1] == b"\x01")
+            elif property == Property.PANELS:
+                for boxes, panels in zip(self.panel_boxes, protocol.decode_panels(reply.value)):
+                    for box, panel in zip(boxes, panels):
+                        box.setCurrentIndex(box.findData(panel))
             else:
                 self.setting_fields[property].setText(reply.value.decode("utf-8", "replace"))
 
@@ -377,6 +419,8 @@ class MonitorWindow(QWidget):
     def set_setting(self, property):
         if property == Property.OBD_ENABLED:
             value = self.obd_box.isChecked()
+        elif property == Property.PANELS:
+            value = [[box.currentData() for box in boxes] for boxes in self.panel_boxes]
         else:
             value = self.setting_fields[property].text()
         try:

@@ -6,6 +6,8 @@
     python cli.py get version sd_card
     python cli.py set wifi_name Home
     python cli.py set obd_enabled 0
+    python cli.py set panels speed,rpm,gravity,pitch_roll,clock fuel,trip_distance,driving_time,route,music
+    python cli.py set panel_action next_left|next_right|toggle_mode
     python cli.py set firmware_update        # reboot, download the firmware over Wi-Fi, reboot
     python cli.py get firmware_update        # the last failed update's reason
     python cli.py set rollback               # reboot into the previous firmware
@@ -38,7 +40,19 @@ def parse_property(name: str) -> Property:
             f"unknown property {name}; one of {', '.join(p.name.lower() for p in Property)}")
 
 
-def parse_set_value(property: Property, text: str):
+def parse_set_value(property: Property, words):
+    """The set command's words: the left and right eyes' comma-separated panels for panels."""
+    if property == Property.PANELS:
+        if len(words) != len(protocol.EYES):
+            raise ValueError("set panels LEFT RIGHT, each a comma-separated list")
+        return [protocol.parse_panels(text) for text in words]
+    text = " ".join(words)
+    if property == Property.PANEL_ACTION:
+        try:
+            return protocol.PanelAction[text.upper()]
+        except KeyError:
+            raise ValueError(f"panel action is one of "
+                             f"{', '.join(a.name.lower() for a in protocol.PanelAction)}") from None
     if property == Property.OBD_ENABLED:
         return text.lower() in ("1", "on", "true")
     if property in protocol.ACTION_PROPERTIES:
@@ -71,7 +85,7 @@ def main() -> int:
     get_parser.add_argument("properties", nargs="+", type=parse_property)
     set_parser = commands.add_parser("set")
     set_parser.add_argument("property", type=parse_property)
-    set_parser.add_argument("value", nargs="?", default="")
+    set_parser.add_argument("value", nargs="*")
     data_parser = commands.add_parser("data")
     data_parser.add_argument("speed_kmh", type=int)
     data_parser.add_argument("rpm", type=int)
