@@ -54,6 +54,7 @@ python monitor_app_II/cli.py scan
 python monitor_app_II/cli.py get version mac_address sd_card wake_word_model multinet_language
 python monitor_app_II/cli.py set wifi_name Home
 python monitor_app_II/cli.py set obd_enabled off
+python monitor_app_II/cli.py set multinet_language en   # reboots into English commands
 python monitor_app_II/cli.py get panels
 python monitor_app_II/cli.py set panels speed,rpm,gravity,pitch_roll,clock fuel,trip_distance,driving_time,route,music
 python monitor_app_II/cli.py set panel_action next_left   # next_right, toggle_mode

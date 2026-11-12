@@ -62,6 +62,7 @@ class Command(IntEnum):
     DISABLE_OBD = 35
 
 
+MULTINET_LANGUAGES = {"cn": "Mandarin (cn)", "en": "English (en)"}
 STRING_PROPERTIES = (Property.WIFI_NAME, Property.WIFI_PASSWORD, Property.REMOTE_ADDRESS)
 
 
@@ -236,12 +237,17 @@ def decode_packet(packet: bytes) -> Tuple[int, int, bytes]:
 
 
 def encode_set(property: Property, value) -> bytes:
-    """Strings for the text properties, bool for OBD enabled, None for delete recordings, and
-    (left, right) panel lists for panels, a PanelAction for panel action."""
+    """Strings for the text properties, "cn" or "en" for the MultiNet language, bool for OBD
+    enabled, None for delete recordings, (left, right) panel lists for panels, and a PanelAction
+    for panel action."""
     if property in STRING_PROPERTIES:
         encoded = value.encode("utf-8")
         if not 1 <= len(encoded) <= STRING_MAX_LENGTH:
             raise ValueError(f"{property.name} must be 1-{STRING_MAX_LENGTH} bytes")
+    elif property == Property.MULTINET_LANGUAGE:
+        if value not in MULTINET_LANGUAGES:
+            raise ValueError("multinet_language is cn or en")
+        encoded = value.encode("ascii")
     elif property == Property.OBD_ENABLED:
         encoded = bytes([1 if value else 0])
     elif property in (Property.DELETE_RECORDINGS, Property.ROLLBACK, Property.SWITCH_SLOT):
@@ -288,7 +294,7 @@ def describe_value(property: int, value: bytes) -> str:
         return "".join(f"\n  {line}" for line in value.decode("utf-8", "replace").splitlines())
     if property == Property.MULTINET_LANGUAGE:
         language = value.decode("utf-8", "replace")
-        return {"cn": "Mandarin (cn)", "en": "English (en)"}.get(language, language)
+        return MULTINET_LANGUAGES.get(language, language)
     return value.decode("utf-8", errors="replace")
 
 
