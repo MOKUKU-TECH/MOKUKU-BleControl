@@ -33,8 +33,9 @@ python monitor_app_II/app.py
 ```
 
 Scan, pick a `mokukuii*` device, and connect. The app then reads the MOKUKU version, MAC address,
-SD card space, wake word model, command language, and settings. Settings (Wi-Fi name and password, remote address, OBD scanning)
-each have **Get** and **Set**. Under Panels, pick each eye's 5 data panels in next-page order
+SD card space, wake word model, and settings. Settings (Wi-Fi name and password, remote address,
+OBD scanning, command language) each have **Get** and **Set**; setting a different command
+language restarts the device. Under Panels, pick each eye's 5 data panels in next-page order
 (memes are always shown as well); **Get** reads them (also on connecting) and **Set** applies
 them to both eyes. **Left Next** and **Right Next** move one eye to its next panel (from memes,
 both eyes return to their data panels), and **Data / Meme** switches both eyes between modes. **Send** writes one dashboard data packet; **Reboot** sends the
@@ -54,6 +55,7 @@ python monitor_app_II/cli.py scan
 python monitor_app_II/cli.py get version mac_address sd_card wake_word_model multinet_language
 python monitor_app_II/cli.py set wifi_name Home
 python monitor_app_II/cli.py set obd_enabled off
+python monitor_app_II/cli.py set multinet_language en   # reboots into English commands
 python monitor_app_II/cli.py get panels
 python monitor_app_II/cli.py set panels speed,rpm,gravity,pitch_roll,clock fuel,trip_distance,driving_time,route,music
 python monitor_app_II/cli.py set panel_action next_left   # next_right, toggle_mode

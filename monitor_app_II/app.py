@@ -44,7 +44,6 @@ INFO_LABELS = {
     Property.MAC_ADDRESS: "MAC address",
     Property.SD_CARD: "SD card",
     Property.WAKE_WORD_MODEL: "Wake word",
-    Property.MULTINET_LANGUAGE: "Command language",
 }
 TEXT_SETTING_LABELS = {
     Property.WIFI_NAME: "Wi-Fi name",
@@ -322,6 +321,12 @@ class MonitorWindow(QWidget):
             form.addRow(theme.hint_label(label), self.setting_row(property, field))
         self.obd_box = QCheckBox("OBD scanning")
         form.addRow(theme.hint_label("OBD"), self.setting_row(Property.OBD_ENABLED, self.obd_box))
+        self.language_box = QComboBox()
+        for code, name in protocol.MULTINET_LANGUAGES.items():
+            self.language_box.addItem(name, code)
+        self.language_box.setToolTip("Setting a different language restarts the device")
+        form.addRow(theme.hint_label("Command language"),
+                    self.setting_row(Property.MULTINET_LANGUAGE, self.language_box))
         layout.addLayout(form)
 
     def setting_row(self, property, field):
@@ -557,7 +562,8 @@ class MonitorWindow(QWidget):
             self.set_connected(True, device.name)
             self.log(f"connected to {device.name}")
             self.refresh_info()
-            for property in (*TEXT_SETTING_LABELS, Property.OBD_ENABLED, Property.PANELS):
+            for property in (*TEXT_SETTING_LABELS, Property.OBD_ENABLED,
+                             Property.MULTINET_LANGUAGE, Property.PANELS):
                 self.get_setting(property)
 
         self.run(self.client.connect(device.address), connected)
@@ -582,6 +588,8 @@ class MonitorWindow(QWidget):
                 self.log(f"get {protocol.describe_failure(reply)}")
             elif property == Property.OBD_ENABLED:
                 self.obd_box.setChecked(reply.value[:1] == b"\x01")
+            elif property == Property.MULTINET_LANGUAGE:
+                self.language_box.setCurrentIndex(self.language_box.findData(reply.value.decode()))
             elif property == Property.PANELS:
                 for boxes, panels in zip(self.panel_boxes, protocol.decode_panels(reply.value)):
                     for box, panel in zip(boxes, panels):
@@ -594,6 +602,8 @@ class MonitorWindow(QWidget):
     def set_setting(self, property):
         if property == Property.OBD_ENABLED:
             value = self.obd_box.isChecked()
+        elif property == Property.MULTINET_LANGUAGE:
+            value = self.language_box.currentData()
         elif property == Property.PANELS:
             value = [[box.currentData() for box in boxes] for boxes in self.panel_boxes]
         else:
