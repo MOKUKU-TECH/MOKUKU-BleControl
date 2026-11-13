@@ -35,14 +35,13 @@ import theme
 from common.qt_loading_dialog import LoadingDialog, DownloadingDialog
 from common.qt_table import create_qt_table
 from common.log import logging
-from ble_client import BleClient, BleQtWidget
+from common.resources import ASSETS_DIRECTORY
+from ble_client import BleQtWidget
 from messager import messager
-from common.log import logging
 
-send_realtime_data = False
-ble_client_widget = BleQtWidget("mokuku", send_realtime_data)
+ble_client_widget = BleQtWidget("mokuku")
 MOKUKU_CONFIG_FILE_PATH = "/sd/config.txt"
-MEME_METADATA_PATH = Path(__file__).resolve().parent.parent / "assets" / "meta"
+MEME_METADATA_PATH = ASSETS_DIRECTORY / "meta"
 APP_TAG_NAMES = {
     0: "Daily",
     1: "Scene",
@@ -431,8 +430,6 @@ class SimpleWindow(QWidget):
         layout_wifi.addWidget(self.rightpanels_input_box)
         layout_wifi.addWidget(self.wifi_button)
 
-        self.start_monitors_button = QPushButton("Start CPU/GPU Monitors", self)
-        self.start_monitors_button.clicked.connect(self.start_monitors)
         self.enable_obd_ble_scan_button = QPushButton("Enable OBD BLE Scan", self)
         self.enable_obd_ble_scan_button.clicked.connect(
             lambda: self.send_device_command(34, "Enabled OBD BLE scan")
@@ -468,7 +465,6 @@ class SimpleWindow(QWidget):
         for ele in ble_widget_elements:
             layout.addWidget(ele)
         layout.addLayout(layout_wifi)
-        layout.addWidget(self.start_monitors_button)
         device_control_layout = QHBoxLayout()
         device_control_layout.addWidget(self.enable_obd_ble_scan_button)
         device_control_layout.addWidget(self.disable_obd_ble_scan_button)
@@ -599,11 +595,6 @@ class SimpleWindow(QWidget):
         ble_client_widget.ble_client.local_file.complete_callback = (
             self.upload_complete_callback
         )
-
-    def start_monitors(self):
-        messager.start_monitors()
-        self.start_monitors_button.setEnabled(False)
-        self.start_monitors_button.setText("CPU/GPU Monitors Running")
 
     def send_command(self):
         if len(self.command_input_box.text()) == 0:

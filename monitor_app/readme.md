@@ -15,8 +15,17 @@ The implementation is written in Python using Bleak, a cross-platform BLE librar
 
 ## Create conda environment
 
+The apps use Python 3.11 and Bleak 2.1.1, which includes a Windows GATT discovery
+retry for `Could not get GATT services: Unreachable`.
+
 ```
 conda env create -f monitor_app/ble_ctrl_env.yaml
+```
+
+To update an existing environment:
+
+```
+conda env update -f monitor_app/ble_ctrl_env.yaml
 ```
 
 ## Run the demo app
@@ -24,6 +33,18 @@ conda env create -f monitor_app/ble_ctrl_env.yaml
 ```
 python monitor_app/app.py
 ```
+
+### Windows app (no Python needed)
+
+Download `MOKUKU-Monitor-windows.zip` from **Releases** or the **Build Monitor App**
+GitHub Actions artifacts. Extract the whole archive and open **MOKUKU Monitor.exe**.
+The bundle includes the meme catalog and example upload configuration.
+The catalog is tracked in this repository at `assets/meta`; source and packaged
+apps use that local copy without requiring the firmware repository.
+
+The workflow builds on `master`/`main` pushes and PRs labeled **build app** when
+`monitor_app/` files (excluding Markdown), `assets/meta`, `assets/config.txt`, or
+the workflow change. Release tags (`v*`) and manual runs always build.
 
 ## Meme Test Panel
 
@@ -98,54 +119,12 @@ caps file replies to the negotiated BLE MTU.
    * Avoid interacting with the screens during OTA.
 
 
-## Set MOKUKU as CPU/GPU usage monitor
+## Upload a panel configuration
 
-Follow these steps to display **CPU and GPU usage** on your MOKUKU device:
-
-✅ **Tips:** Make sure BLE connection is stable during upload.
-
-### 1️⃣ Enable Realtime Data
-
-In `app.py`, set:
-
-```python id="enable_realtime"
-send_realtime_data = True
-```
-
-* **CPU usage** will be displayed on the **Velocity Panel**.
-* **GPU usage** will be displayed on the **GPU Panel**.
-
-### 2️⃣ Upload Example Configuration
-
-(All the parameter are setup, you can directly click the button)
-
-1. Open `assets/config.txt` (or the path set in `ble_client.py` as `CONFIG_FILE_PATH`).
-2. Click the **Upload File** button to send it to MOKUKU.
-
-Example `config.txt` content:
-
-```text id="config_example"
-# Panel 1 (CPU)
-1, 44                # Clear all existing elements
-1, 40, 0, 100        # Set value range: 0–100
-1, 41, 0, 61, 60, CPU %  # Add CPU text element
-
-# Panel 2 (GPU)
-2, 44                # Clear all existing elements
-2, 40, 0, 100        # Set value range: 0–100
-2, 41, 0, -72, 48, gpu % # Add GPU text element
-```
-
-### 3️⃣ Reboot MOKUKU
-
-| Step | Video          |
-| ------- | -------------------- |
-| Disconnect and reconnect power to **reboot the device**.<br>Reconnect via BLE; MOKUKU will now display **your PC CPU and GPU data**.      | <video src="https://github.com/user-attachments/assets/a0e28482-c74e-4fdc-8506-c81567d8ea54">  |
-
-### 4️⃣ Recover MOKUKU (Reset Configuration)
-
-* To reset or recover MOKUKU, send an **empty `config.txt`** file.
-* This clears all custom panels and restores the default display.
+Edit `assets/config.txt`, connect over BLE, and click **Upload File**. In the
+Windows bundle, the file is under `_internal/assets/`. The example labels the
+speed and RPM panels. Reboot MOKUKU to apply it; upload an empty file to restore
+the default panels.
 
 ## Vibe Coding Monitor Mode
 
@@ -162,11 +141,8 @@ that repo checked out.
 
 1. Download the zip for your OS from the repo's **Releases** (or the
    **Build Vibe Monitor** GitHub Actions run's artifacts):
-   `MOKUKU-Vibe-Monitor-windows.zip`, or for Linux one of
-   `-ubuntu20.04.zip` (glibc 2.31+, oldest systems), `-ubuntu22.04.zip`
-   (glibc 2.35+), or `-ubuntu24.04.zip` (glibc 2.39+). Pick the newest one
-   your system runs; if it reports `GLIBC_… not found`, step down to an older
-   build.
+   `MOKUKU-Vibe-Monitor-windows.zip` or
+   `MOKUKU-Vibe-Monitor-linux-ubuntu24.04.zip` (glibc 2.39+).
 2. Extract it anywhere and double-click **MOKUKU Vibe Monitor** inside the
    extracted folder. No Python, conda, or `pip install` required.
 3. Pick a transport tab and connect: **Bluetooth** → **Scan** → pick device →
@@ -181,6 +157,11 @@ that repo checked out.
 That's it. Keep the app running while you code; it forwards each session's
 status to MOKUKU. The rest of this section explains each piece and the
 run-from-source path for developers.
+
+GitHub Actions builds Windows and Ubuntu 24.04 bundles. Pushes to `master`/`main`
+and PRs labeled **build app** build only when `monitor_app/` files (excluding
+Markdown) or the build workflow change. Release tags (`v*`) and manual runs
+always build both bundles.
 
 ### 1. Enable the mode on the device
 

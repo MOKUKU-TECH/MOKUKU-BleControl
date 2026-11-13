@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # Build the MOKUKU Vibe Monitor onedir bundle on Linux and zip it.
-# Optional arg: the zip basename (default MOKUKU-Vibe-Monitor-linux) - CI
-# passes a per-distro name so the ubuntu-22.04 and 24.04 zips don't collide.
+# Optional arg: the zip basename (default MOKUKU-Vibe-Monitor-linux).
 set -euo pipefail
 
 name="${1:-MOKUKU-Vibe-Monitor-linux}"

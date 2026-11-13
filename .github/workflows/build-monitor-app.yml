@@ -1,0 +1,71 @@
+name: Build Monitor App
+
+on:
+  push:
+    branches: [master, main]
+    tags: ["v*"]
+    paths:
+      - 'monitor_app/**'
+      - '!monitor_app/**/*.md'
+      - 'assets/meta'
+      - 'assets/config.txt'
+      - '.github/workflows/build-monitor-app.yml'
+  pull_request:
+    types: [labeled]
+    paths:
+      - 'monitor_app/**'
+      - '!monitor_app/**/*.md'
+      - 'assets/meta'
+      - 'assets/config.txt'
+      - '.github/workflows/build-monitor-app.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event.label.name }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    if: github.event_name != 'pull_request' || github.event.label.name == 'build app'
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    defaults:
+      run:
+        working-directory: monitor_app
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt pyinstaller
+
+      - name: Build bundle
+        run: >-
+          python -m PyInstaller --clean --noconfirm --onedir --windowed
+          --name "MOKUKU Monitor"
+          --add-data "../assets/meta:assets"
+          --add-data "../assets/config.txt:assets"
+          --hidden-import coloredlogs
+          --collect-submodules bleak.backends.winrt
+          app.py
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MOKUKU-Monitor-windows
+          path: "monitor_app/dist/MOKUKU Monitor"
+          if-no-files-found: error
+
+      - name: Zip release bundle
+        if: startsWith(github.ref, 'refs/tags/')
+        run: Compress-Archive -Path "dist/MOKUKU Monitor" -DestinationPath "dist/MOKUKU-Monitor-windows.zip"
+
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: monitor_app/dist/MOKUKU-Monitor-windows.zip

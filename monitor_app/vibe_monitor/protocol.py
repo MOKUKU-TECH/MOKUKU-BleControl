@@ -96,9 +96,7 @@ def encode_time_sync_message():
     epoch: SystemStateGetTime() (state_manager.c) derives the displayed
     clock as (this value) % 86400, with no timezone conversion of its own -
     a raw UTC epoch's mod-86400 is UTC time-of-day, which is wrong by a
-    fixed offset for anyone not in UTC+0. messager.py's get_current_time_ms()
-    (the reference app's own equivalent of this function) already sends
-    local seconds-since-midnight for the same reason - mirrored here.
+    fixed offset for anyone not in UTC+0.
     """
     vel, rpm_a, rpm_b, gas = 255, 0, 0, 0
     now = time.localtime()
