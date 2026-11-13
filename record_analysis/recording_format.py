@@ -10,7 +10,7 @@ import warnings
 MAGIC = b"MOKUREC\0"
 VERSION = 1
 SYNC = b"\xa5\x5a"
-FRAME_SIZES = {1: 37, 2: 17, 3: 42, 4: 57}
+FRAME_SIZES = {1: 37, 2: 17, 3: 42, 4: 57, 5: 50}
 
 
 def _binary_records(data, position):
@@ -47,9 +47,12 @@ def _binary_records(data, position):
             timestamp, age, lat, lng, alt, speed, satellites = struct.unpack_from(
                 "<qIddffB", data, position + 3
             )
-            yield {"type": "gps", "time": timestamp, "age": age, "lat": lat,
-                   "lng": lng, "alt": alt, "speed": speed,
-                   "num_satellites": satellites}
+            record = {"type": "gps", "time": timestamp, "age": age, "lat": lat,
+                      "lng": lng, "alt": alt, "speed": speed,
+                      "num_satellites": satellites}
+            if record_type == 5:
+                record["hdop"], record["course"] = struct.unpack_from("<2f", data, position + 40)
+            yield record
         position += size
 
 
