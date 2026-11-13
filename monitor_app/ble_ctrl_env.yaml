@@ -36,7 +36,6 @@ dependencies:
       - coloredlogs==15.0.1
       - dbus-fast==2.24.4
       - humanfriendly==10.0
-      - pynvml==11.5.3
       - pyqt5==5.15.11
       - pyqt5-qt5==5.15.18
       - pyqt5-sip==12.15.0

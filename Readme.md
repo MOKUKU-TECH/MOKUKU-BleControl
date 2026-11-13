@@ -442,7 +442,7 @@ Example: `1, 40, 0, 100`
 i, 41, x, y, font_size, text
 ```
 
-Example: `1, 41, 0, 61, 60, CPU %`
+Example: `1, 41, 0, 61, 60, Speed`
 
 * `(x, y)` origin is the **center of the panel**
 
@@ -476,9 +476,8 @@ idf.py -B IDF_MOKUKU/build_1 flash monitor
 
 Download the prebuilt app for your OS from **Releases** (or the **Build Vibe
 Monitor** GitHub Actions run's artifacts): `MOKUKU-Vibe-Monitor-windows.zip`, or
-for Linux one of `-ubuntu20.04.zip` / `-ubuntu22.04.zip` / `-ubuntu24.04.zip`
-(pick the newest your system runs; if it reports `GLIBC_… not found`, step down
-to an older build). Extract it and double-click **MOKUKU Vibe Monitor** — no
+`MOKUKU-Vibe-Monitor-linux-ubuntu24.04.zip` (glibc 2.39+) for Linux.
+Extract it and double-click **MOKUKU Vibe Monitor** — no
 Python, conda, or `pip install` required.
 
 **3. Set it up in the app**
@@ -536,12 +535,17 @@ python monitor_app_II/app.py
 python monitor_app_II/cli.py get version sd_card
 ```
 
-## Reference BLE demo app (developers)
+## Reference BLE monitor app
 
 `monitor_app/app.py` is a Python demo of the raw protocol — scan for devices,
-connect, write data packets, receive notifications, and send commands — built on
+connect, transfer files, receive notifications, and send commands — built on
 [Bleak](https://github.com/hbldh/bleak). **See the detailed doc in the
 'monitor_app' subfolder:** [Python BLE Example](./monitor_app/readme.md).
+
+For Windows, download `MOKUKU-Monitor-windows.zip` from **Releases** or the
+**Build Monitor App** workflow artifacts, extract it, and open **MOKUKU Monitor.exe**.
+The bundled meme catalog comes from this repository's `assets/meta`; the app
+does not require a checkout of the firmware repository.
 
 ```bash
 conda env create -f monitor_app/ble_ctrl_env.yaml

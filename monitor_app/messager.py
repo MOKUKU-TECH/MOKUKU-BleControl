@@ -2,22 +2,8 @@
 
 import struct
 import threading
-import time
 from collections import deque
 from common.log import logging
-from cpu_monitor import get_cpu_usage, start_cpu_monitor
-from gpu_monitor import get_gpu_usage, start_gpu_monitor
-
-# Both monitors run background polling threads (psutil / pynvml), so they stay
-# off until start_monitors() is called - see the "Start CPU/GPU Monitors" button.
-
-
-def get_current_time_ms():
-    # Current time in seconds as float
-    unix_time = time.time()
-    t = time.localtime(unix_time)
-    seconds_since_midnight = t.tm_hour * 3600 + t.tm_min * 60 + t.tm_sec
-    return seconds_since_midnight
 
 
 class MokukuMessager:
@@ -28,39 +14,6 @@ class MokukuMessager:
         # self.command_lock = threading.Lock()
         # self.command_queue = deque()
         self.tag = "[messager]"
-
-    def start_monitors(self):
-        start_cpu_monitor()
-        start_gpu_monitor()
-
-    # data format is
-    # | 1 |  2  |  3   |   4  |  5  |     6       |     7       |      8      |     9       |     10    |   11    |
-    # |---|-----|------|------|-----|-------------|-------------|-------------|-------------|-----------|---------|
-    # | 1 | VEL | RPM_A| RPM_B| GAS | TIMESTAMP_1 | TIMESTAMP_2 | TIMESTAMP_3 | TIMESTAMP_4 | BACKLIGHT | COMMAND |
-    def get_message_to_send(self):
-        cpu_usage = get_cpu_usage()
-
-        byte_data = []
-        byte_data.extend(struct.pack("<B", 1))  # first byte for message type ID
-        byte_data.extend(struct.pack("<B", cpu_usage))
-
-        # rpm_ = ((rpm_A * 256) + rpm_B) / 4;
-        rpm = get_gpu_usage()
-        rpm_A = int(rpm * 4 / 256)
-        rpm_B = int(rpm * 4 - rpm_A * 256)
-        byte_data.extend(struct.pack("<B", rpm_A))
-        byte_data.extend(struct.pack("<B", rpm_B))
-        byte_data.extend(struct.pack("<B", 25))  # gas
-
-        t_sec = get_current_time_ms()
-        byte_data.extend(struct.pack("<I", t_sec))
-
-        # set up backlight
-        byte_data.extend(struct.pack("<B", 90))
-
-        # for command (not used anymore)
-        byte_data.extend(struct.pack("<B", 0))
-        return byte_data
 
     def pop_ack_message_to_send(self):
         with self.ack_message_lock:

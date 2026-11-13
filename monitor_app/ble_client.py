@@ -25,11 +25,12 @@ import theme
 from common.qt_loading_dialog import LoadingDialog, DownloadingDialog
 from bleak import BleakClient, BleakScanner, BleakError
 from common.log import logging
+from common.resources import ASSETS_DIRECTORY
 from messager import messager
 
 FILE_BUFFER_SIZE = 128
 FILE_DOWNLOAD_CHUNK_SIZE = 255
-CONFIG_FILE_PATH = "assets/config.txt"
+CONFIG_FILE_PATH = ASSETS_DIRECTORY / "config.txt"
 
 
 class FileTransfer:
@@ -191,12 +192,11 @@ class FileTransfer:
 
 
 class BleClient:
-    def __init__(self, target_device, send_realtime_data, timeout=3):
+    def __init__(self, target_device, timeout=3):
         self.SERVICE_UUID = "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
         self.CHARACTERISTIC_UUID_MAIN = "beb5483e-36e1-4688-b7f5-ea07361b26a8"
         self.CHARACTERISTIC_UUID_ACK = "d222e154-1a80-4e71-9a63-2aa2c0ce0a8c"
         self.timeout = timeout
-        self.send_realtime_data = send_realtime_data
         self.target_device = target_device
         self.devices_list = []
 
@@ -398,21 +398,9 @@ class BleClient:
                         pass
 
                 messager.set_ack_message_wakeup(wake_sender)
-                next_realtime_send = loop.time()
                 while not self.client_stop:
                     if not client.is_connected:
                         break
-                    now = loop.time()
-                    if self.send_realtime_data and now >= next_realtime_send:
-                        byte_data = messager.get_message_to_send()
-                        await client.write_gatt_char(
-                            self.CHARACTERISTIC_UUID_MAIN, byte_data
-                        )
-                        next_realtime_send = loop.time() + 0.5
-
-                    if self.client_stop:
-                        break
-
                     message_ready.clear()
                     message_to_send = messager.pop_ack_message_to_send()
                     if message_to_send is not None:
@@ -445,9 +433,6 @@ class BleClient:
                     else:
                         remaining = None
 
-                    if self.send_realtime_data:
-                        realtime_wait = max(0, next_realtime_send - now)
-                        remaining = min(remaining, realtime_wait) if remaining is not None else realtime_wait
                     remaining = min(remaining, 1.0) if remaining is not None else 1.0
                     try:
                         await asyncio.wait_for(message_ready.wait(), timeout=remaining)
@@ -543,8 +528,8 @@ class BleClient:
 
 
 class BleQtWidget:
-    def __init__(self, ble_target, send_realtime_data):
-        self.ble_client = BleClient(ble_target, send_realtime_data)
+    def __init__(self, ble_target):
+        self.ble_client = BleClient(ble_target)
         self.parent = None
 
     def start_ble_scan(self):

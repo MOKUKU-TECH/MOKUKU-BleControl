@@ -11,8 +11,16 @@ on:
   push:
     branches: [master, main]
     tags: ["v*"]
+    paths:
+      - 'monitor_app/**'
+      - '!monitor_app/**/*.md'
+      - '.github/workflows/build-vibe-monitor.yml'
   pull_request:
     types: [labeled]
+    paths:
+      - 'monitor_app/**'
+      - '!monitor_app/**/*.md'
+      - '.github/workflows/build-vibe-monitor.yml'
   workflow_dispatch:
 
 concurrency:
@@ -30,14 +38,6 @@ jobs:
           - os: windows-latest
             script: powershell -ExecutionPolicy Bypass -File packaging/build.ps1 -Name MOKUKU-Vibe-Monitor-windows
             artifact: MOKUKU-Vibe-Monitor-windows
-          # Two Linux builds: PyInstaller bundles libpython but not glibc, so
-          # a bundle requires >= the build machine's glibc. The 22.04 build
-          # (glibc 2.35) runs on older systems; the 24.04 build (glibc 2.39)
-          # is for matching-or-newer ones. Distinct zip names so they don't
-          # collide on a release.
-          - os: ubuntu-22.04
-            script: bash packaging/build.sh MOKUKU-Vibe-Monitor-linux-ubuntu22.04
-            artifact: MOKUKU-Vibe-Monitor-linux-ubuntu22.04
           - os: ubuntu-24.04
             script: bash packaging/build.sh MOKUKU-Vibe-Monitor-linux-ubuntu24.04
             artifact: MOKUKU-Vibe-Monitor-linux-ubuntu24.04
