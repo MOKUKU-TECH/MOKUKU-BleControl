@@ -263,13 +263,13 @@ class BleClient:
         await scanner.stop()  # stop scanning
 
         self.devices_list = []
-        for d in scanner.discovered_devices:
+        for d, advertisement in scanner.discovered_devices_and_advertisement_data.values():
             if not d.name or not d.name.startswith(self.target_device):
                 continue
             device = {}
             device["name"] = d.name
             device["address"] = d.address
-            device["rssi"] = d.rssi
+            device["rssi"] = advertisement.rssi
             self.devices_list.append(device)
 
         logging.info("ble scan done!")
@@ -357,9 +357,7 @@ class BleClient:
                         f"✅ Connected to {self.service_address} device!"
                     )
 
-                # Access the 'services' property to trigger service discovery
-                # This replaces the deprecated client.get_services()
-                services = client.services  # <-- New: Triggers discovery automatically
+                services = client.services
                 self.print_all_services(services)
 
                 characteristic = services.get_characteristic(

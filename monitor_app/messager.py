@@ -33,7 +33,7 @@ class MokukuMessager:
         # logging.info(f"{self.tag} add message {message}")
         with self.ack_message_lock:
             # push message to the queue
-            self.ack_message_queue.append(message)
+            self.ack_message_queue.append(bytes(message))
             wakeup = self.ack_message_wakeup
         if wakeup:
             wakeup()

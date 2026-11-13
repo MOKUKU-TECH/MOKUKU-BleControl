@@ -15,8 +15,17 @@ The implementation is written in Python using Bleak, a cross-platform BLE librar
 
 ## Create conda environment
 
+The apps use Python 3.11 and Bleak 2.1.1, which includes a Windows GATT discovery
+retry for `Could not get GATT services: Unreachable`.
+
 ```
 conda env create -f monitor_app/ble_ctrl_env.yaml
+```
+
+To update an existing environment:
+
+```
+conda env update -f monitor_app/ble_ctrl_env.yaml
 ```
 
 ## Run the demo app

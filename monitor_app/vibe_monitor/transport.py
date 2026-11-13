@@ -93,9 +93,9 @@ class BleTransport:
         # leave the adapter stuck "discovering" and silently break later scans.
         async with BleakScanner() as scanner:
             await asyncio.sleep(SCAN_TIMEOUT_SECONDS)
-            devices = list(scanner.discovered_devices)
-        return [(d.address, f"{d.name}   {d.address}   RSSI {d.rssi}", d.rssi)
-                for d in devices if d.name and d.name.startswith(DEVICE_NAME_PREFIX)]
+            devices = list(scanner.discovered_devices_and_advertisement_data.values())
+        return [(d.address, f"{d.name}   {d.address}   RSSI {advertisement.rssi}", advertisement.rssi)
+                for d, advertisement in devices if d.name and d.name.startswith(DEVICE_NAME_PREFIX)]
 
     async def connect(self, address):
         from bleak import BleakClient
@@ -107,9 +107,9 @@ class BleTransport:
             if self.on_disconnect:
                 self.on_disconnect()
 
-        client = BleakClient(address, disconnected_callback=_on_disconnect)
+        client = BleakClient(address, disconnected_callback=_on_disconnect, timeout=30)
         try:
-            await asyncio.wait_for(client.connect(timeout=20), timeout=25.0)
+            await asyncio.wait_for(client.connect(), timeout=35.0)
         except Exception:
             # bleak's client-side connect() can time out while BlueZ's underlying
             # connection actually completed moments later - don't discard it.
