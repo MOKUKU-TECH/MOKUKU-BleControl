@@ -70,7 +70,7 @@ class PanelType(IntEnum):
     """The data panels an eye can list; memes are always shown as well."""
     SPEED = 1
     RPM = 2
-    GRAVITY = 3
+    ACCELERATION = 3
     PITCH_ROLL = 4
     FUEL = 5
     TRIP_DISTANCE = 6
@@ -111,7 +111,7 @@ def panel_name(panel: PanelType) -> str:
 
 
 def parse_panels(text: str) -> List[PanelType]:
-    """Comma-separated panel names, for example speed,rpm,gravity,pitch_roll,clock."""
+    """Comma-separated panel names, for example speed,rpm,acceleration,pitch_roll,clock."""
     try:
         return [PanelType[name.strip().upper()] for name in text.split(",")]
     except KeyError as error:
