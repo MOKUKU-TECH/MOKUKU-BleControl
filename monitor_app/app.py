@@ -571,10 +571,10 @@ class SimpleWindow(QWidget):
         self.downloading_dialog.file_transfer = transfer
         self.downloading_dialog.show()
         self.download_button.setEnabled(False)
-        transfer.download_path = save_path
-        transfer.remote_path = download_file
-        transfer.complete_callback = self.download_complete_callback
-        messager.push_string_message(65, download_file)
+        try:
+            ble_client_widget.ble_client.download(download_file, save_path, self.download_complete_callback)
+        except OSError as error:
+            self.finish_download(False, f"Cannot save file: {error}")
 
     def upload_complete_callback(self):
         if self.uploading_dialog:

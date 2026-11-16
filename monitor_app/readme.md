@@ -5,7 +5,7 @@ This example demonstrates how to connect to a MOKUKU device over Bluetooth Low E
 The example shows how to:
 
 * scan for BLE devices
-* connect to a MOKUKU device
+* connect to a MOKUKU device, and disconnect with **Disconnect BLE** (a download in progress stops)
 * write data packets
 * receive notifications
 * send protocol commands
@@ -94,16 +94,18 @@ Connect over BLE, open **Info Queries**, request the recording files, and click
 **Download** beside the file you want. You can also enter its full path (for
 example, `/sd/record/mobili_2.record`) in the main window and click
 **Download File**. Choose a local save location and keep the app connected until
-the byte counter reaches the file size and the completion message appears. If
-BLE disconnects, the app reconnects and resumes from the saved byte offset.
-It stops after three reconnect attempts without download progress. A failed
-transfer leaves a partial file at the selected location.
+the byte counter reaches the file size and the completion message appears. The
+app downloads CRC-checked sectors over the File Command and File Data
+characteristics. If BLE disconnects, it reconnects and resumes after the bytes
+already saved, which the device checks first. It stops after three reconnect
+attempts without download progress. A failed transfer leaves a partial file at
+the selected location.
 
 New firmware saves binary `.record` files. Analyze them with the scripts in
 `record_analysis/`, which also read older text recordings.
 
-Install the matching MobiliMOKUKU firmware before using this download flow; it
-caps file replies to the negotiated BLE MTU.
+Downloads need MobiliMOKUKU firmware with the sector file transfer; on older
+firmware the app reports that the firmware must be updated.
 
 ⚠️ **Important Notice**:
 
