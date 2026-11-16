@@ -4,12 +4,14 @@ This repository documents the **Bluetooth Low Energy (BLE) protocol** used by
 MOKUKU devices, and ships the host-side tools that speak it (a reference control
 app and the standalone Vibe Coding Monitor).
 
-The device exposes two BLE characteristics:
+The device exposes these BLE characteristics:
 
 | Characteristic   | UUID                                   | Purpose                                 |
 | ---------------- | -------------------------------------- | --------------------------------------- |
 | Transfer Data    | `beb5483e-36e1-4688-b7f5-ea07361b26a8` | Real-time dashboard data                |
 | Transfer Message | `d222e154-1a80-4e71-9a63-2aa2c0ce0a8c` | Configuration / file / command messages |
+| File Command     | `18bf25fe-c5c8-40fe-ab13-9aa144d65b69` | Sector file transfer commands           |
+| File Data        | `737cbd9b-848b-4fad-87b8-5c3b9f75768d` | Sector file transfer data               |
 
 ## Table of Contents
 
@@ -290,50 +292,11 @@ or unavailable model, `1` means `wn10_himokuku` with English MultiNet, and
 
 # 3. Download File from MOKUKU
 
-Files are transferred as bytes, including `.record` recordings.
-
-### Step 1 — Open File
-
-Send:
-
-```
-id(1 byte)
-string_len(1 byte, <255)
-string(n bytes)  // file path
-```
-
-Device response:
-
-```
-id = 65
-ret (1 byte)
-file_key (4 bytes)
-file_size (4 bytes)
-```
-
-### Step 2 — Request File Data
-
-Send:
-
-```
-id = 66
-data_size (1 byte, <=255)
-file_key (4 bytes)
-begin_position (4 bytes)
-```
-
-Device response:
-
-```
-id = 66
-data_size (1 byte)
-begin_position (4 bytes)
-data (n bytes)
-```
-
-Request up to 255 bytes. The device limits each reply to the negotiated ATT MTU
-minus nine bytes for headers. Continue from the returned offset until the
-reported file size is received; a short reply alone does not mean end-of-file.
+Files, including `.record` recordings, download over the File Command and File
+Data characteristics with the sector transfer MOKUKU II uses: send the access
+password (id `44`) first and use paths under `/sd/`.
+`monitor_app/sector_transfer.py` implements it; the wire format is in
+MobiliMOKUKU's `doc/MOKUKU_II_BLE_CONTROL.md`.
 
 # 4. Upload File to MOKUKU
 

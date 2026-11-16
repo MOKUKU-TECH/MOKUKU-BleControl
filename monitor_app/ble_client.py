@@ -27,9 +27,10 @@ from bleak import BleakClient, BleakScanner, BleakError
 from common.log import logging
 from common.resources import ASSETS_DIRECTORY
 from messager import messager
+import sector_transfer
 
 FILE_BUFFER_SIZE = 128
-FILE_DOWNLOAD_CHUNK_SIZE = 255
+ACCESS_PASSWORD = "mobili0731"
 CONFIG_FILE_PATH = ASSETS_DIRECTORY / "config.txt"
 
 
@@ -52,46 +53,20 @@ class FileTransfer:
         self.download_path = None
         self.remote_path = None
         self.error = None
+        # CRC of the bytes saved so far, which the device checks before resuming.
+        self.crc = 0
 
-    def set(self, id, size, file_name):
-        if self.file and not self.file.closed:
-            if size != self.file_size:
-                raise ValueError("Remote file size changed during download")
-            self.file_id = id
-            self.file.seek(self.current_pos)
-            return
-        self.file_id = id
-        self.file_size = size
-        self.current_pos = 0
-        self.file = open(file_name, "wb")
+    def start_download(self, remote_path, download_path, complete_callback):
+        self.reset()
+        self.file = open(download_path, "wb")
+        self.remote_path = remote_path
+        self.download_path = download_path
+        self.complete_callback = complete_callback
 
-    def extend_to_bytes(self, byte_data):
-        byte_data.extend(struct.pack("<I", self.file_id))
-        byte_data.extend(struct.pack("<I", self.file_size))
-        byte_data.extend(struct.pack("<I", self.current_pos))
-        return byte_data
-
-    def downloadfile_remote_created(self, data):
-        if len(data) != 10 or data[1] != 1:
-            self.call_complete("Invalid file open response")
-            return False
-        ptr_value = int.from_bytes(data[2:6], byteorder="little")
-        file_size = int.from_bytes(data[6:10], byteorder="little")
-        logging.info(
-            f"📥 Received file open {data[0]} {data[1]} : 0x{ptr_value:08X} {file_size}"
-        )
-        if ptr_value == 0 or file_size == 0:
-            self.call_complete("Remote file is missing or empty")
-            return False
-        if not self.download_path:
-            self.call_complete("No download destination selected")
-            return False
-        try:
-            self.set(ptr_value, file_size, self.download_path)
-        except (OSError, ValueError) as error:
-            self.call_complete(f"Cannot save file: {error}")
-            return False
-        return True
+    def write(self, data):
+        self.file.write(data)
+        self.crc = sector_transfer.crc16(data, self.crc)
+        self.current_pos += len(data)
 
     def call_complete(self, error=None):
         if self.file and not self.file.closed:
@@ -107,41 +82,6 @@ class FileTransfer:
             self.complete_callback()
             self.complete_callback = None
         self.reset()
-
-    def read_file_data(self, data):
-        if self.file is None:
-            return False
-        if len(data) < 6 or len(data) != data[1] + 6:
-            self.call_complete("Invalid file data packet")
-            return False
-        data_size = data[1]
-        start_pos = int.from_bytes(data[2:6], byteorder="little")
-        # check file beginning
-        if start_pos != self.current_pos:
-            # need to resend the request
-            logging.error(
-                f"[FILE] wrong file data position {start_pos}!={self.current_pos}"
-            )
-            return True
-
-        if data_size > 0:
-            if self.current_pos + data_size > self.file_size:
-                self.call_complete("File data exceeds the reported size")
-                return False
-            try:
-                self.file.write(data[6:])
-            except OSError as error:
-                self.call_complete(f"Cannot write file: {error}")
-                return False
-            self.current_pos += data_size
-        if self.current_pos == self.file_size:
-            logging.info("[FILE] download file transfer complete: %s", self.download_path)
-            self.call_complete()
-            return False
-        if data_size == 0:
-            self.call_complete(f"Download stopped at {self.current_pos} of {self.file_size} bytes")
-            return False
-        return True
 
     def uploadfile_remote_created(self, data):
         self.file_id = int.from_bytes(data[2:6], byteorder="little")
@@ -213,9 +153,6 @@ class BleClient:
         self.message_label = None
         self.remote_file = FileTransfer()
         self.local_file = FileTransfer()
-        self.last_file_request = None
-        self.file_request_sent_at = 0
-        self.file_request_retries = 0
         self.meme_states_callbacks = []
         self.info_query_callbacks = {}
 
@@ -229,6 +166,11 @@ class BleClient:
             messager.push_himokuku_wakeword_model_request()
         else:
             messager.push_string_message(message_id, value)
+
+    def download(self, remote_path, download_path, complete_callback):
+        """Saves a device file over the sector transfer; complete_callback once it ends."""
+        self.remote_file.start_download(remote_path, download_path, complete_callback)
+        messager.wake_ack_sender()
 
     def stop_client(self):
         self.client_stop = True
@@ -330,12 +272,7 @@ class BleClient:
                 self.remote_file.file_size,
                 reconnect_attempts,
             )
-            self.last_file_request = None
-            messager.discard_file_read_requests()
             await asyncio.sleep(2)
-            if self.client_stop:
-                break
-            messager.push_string_message(65, self.remote_file.remote_path)
         if self.remote_file.complete_callback:
             reason = "Download stopped" if self.client_stop else "No download progress after 3 reconnect attempts"
             self.remote_file.call_complete(reason)
@@ -385,6 +322,25 @@ class BleClient:
                     return
                 logging.info("✅ Ack characteristic found.")
 
+                password = ACCESS_PASSWORD.encode("utf-8")
+                await client.write_gatt_char(
+                    self.CHARACTERISTIC_UUID_ACK, bytes([44, len(password)]) + password, response=True
+                )
+                file_commands, file_data = asyncio.Queue(), asyncio.Queue()
+                sector_download = None
+                if services.get_characteristic(sector_transfer.FILE_DATA_UUID):
+                    await client.start_notify(
+                        sector_transfer.FILE_COMMAND_UUID,
+                        lambda _, data: file_commands.put_nowait(bytes(data)),
+                    )
+                    await client.start_notify(
+                        sector_transfer.FILE_DATA_UUID,
+                        lambda _, data: file_data.put_nowait(bytes(data)),
+                    )
+                    sector_download = sector_transfer.SectorDownload(client, file_commands, file_data)
+                else:
+                    logging.warning("[FILE] firmware has no sector file transfer; update it to download files")
+
                 self.connected = True
                 loop = asyncio.get_running_loop()
                 message_ready = asyncio.Event()
@@ -402,9 +358,6 @@ class BleClient:
                     message_ready.clear()
                     message_to_send = messager.pop_ack_message_to_send()
                     if message_to_send is not None:
-                        if message_to_send[0] == 66:
-                            self.last_file_request = message_to_send
-                            self.file_request_sent_at = loop.time()
                         await client.write_gatt_char(
                             self.CHARACTERISTIC_UUID_ACK,
                             message_to_send,
@@ -412,28 +365,12 @@ class BleClient:
                         )
                         continue
 
-                    now = loop.time()
-                    if self.last_file_request and self.remote_file.file:
-                        remaining = 5 - (now - self.file_request_sent_at)
-                        if remaining <= 0:
-                            if self.file_request_retries == 3:
-                                self.last_file_request = None
-                                self.remote_file.call_complete("No file data received after 3 retries")
-                            else:
-                                self.file_request_retries += 1
-                                self.file_request_sent_at = now
-                                await client.write_gatt_char(
-                                    self.CHARACTERISTIC_UUID_ACK,
-                                    self.last_file_request,
-                                    response=True,
-                                )
-                            continue
-                    else:
-                        remaining = None
+                    if self.remote_file.complete_callback:
+                        await self.download_file(client, sector_download)
+                        continue
 
-                    remaining = min(remaining, 1.0) if remaining is not None else 1.0
                     try:
-                        await asyncio.wait_for(message_ready.wait(), timeout=remaining)
+                        await asyncio.wait_for(message_ready.wait(), timeout=1.0)
                     except asyncio.TimeoutError:
                         pass
 
@@ -451,31 +388,38 @@ class BleClient:
             messager.set_ack_message_wakeup(None)
             self.connected = False
 
-    def require_file_data(self):
-        # id(=66), buffer_size, file_id, begin
-        byte_data = []
-        byte_data.extend(struct.pack("<B", 66))  # first byte for message type ID
-        byte_data.extend(struct.pack("<B", FILE_DOWNLOAD_CHUNK_SIZE))
-        byte_data.extend(struct.pack("<I", self.remote_file.file_id))
-        byte_data.extend(struct.pack("<I", self.remote_file.current_pos))
-        messager.push_ack_message(byte_data)
+    async def download_file(self, client, sector_download):
+        """Runs the pending download; a dropped link leaves it pending for the reconnect to resume."""
+        transfer = self.remote_file
+        if sector_download is None:
+            transfer.call_complete("The firmware has no sector file transfer; update it to download files")
+            return
+        started = asyncio.get_running_loop().time()
+        start_position = transfer.current_pos
+        try:
+            await sector_download.run(transfer, lambda: self.client_stop)
+        except Exception as error:
+            if not client.is_connected:
+                return
+            transfer.call_complete(f"Download failed at {transfer.current_pos} bytes: {error}")
+            return
+        if self.client_stop:
+            return
+        elapsed = asyncio.get_running_loop().time() - started
+        logging.info(
+            "[FILE] downloaded %s: %d bytes, %.1f KB/s",
+            transfer.download_path,
+            transfer.file_size,
+            (transfer.current_pos - start_position) / max(elapsed, 1e-3) / 1024,
+        )
+        transfer.call_complete()
 
     # This callback is called every time ESP32 sends a notification
     def notification_handler(self, sender: int, data: bytearray):
         if not data:
             logging.error("[BLE] empty notification")
             return
-        if data[0] == 65:
-            self.last_file_request = None
-            self.file_request_retries = 0
-            if self.remote_file.downloadfile_remote_created(data):
-                self.require_file_data()
-        elif data[0] == 66:
-            self.last_file_request = None
-            self.file_request_retries = 0
-            if self.remote_file.read_file_data(data):
-                self.require_file_data()
-        elif data[0] == 63:
+        if data[0] == 63:
             # file opened, we could begin to send data
             self.local_file.open_file(CONFIG_FILE_PATH)
             self.local_file.uploadfile_remote_created(data)
