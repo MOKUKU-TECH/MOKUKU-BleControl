@@ -6,7 +6,7 @@
     python cli.py get version sd_card
     python cli.py set wifi_name Home
     python cli.py set obd_enabled 0
-    python cli.py set panels speed,rpm,gravity,pitch_roll,clock fuel,trip_distance,driving_time,route,music
+    python cli.py set panels speed,rpm,acceleration,pitch_roll,clock fuel,trip_distance,driving_time,route,music
     python cli.py set panel_action next_left|next_right|toggle_mode
     python cli.py data 60 2400 75 [--command reboot]
     python cli.py ls [/sdcard/record]
