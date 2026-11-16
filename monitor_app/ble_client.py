@@ -276,6 +276,8 @@ class BleClient:
         if self.remote_file.complete_callback:
             reason = "Download stopped" if self.client_stop else "No download progress after 3 reconnect attempts"
             self.remote_file.call_complete(reason)
+        if self.message_label:
+            self.message_label.setText("BLE disconnected.")
         logging.info("ble client stopped!")
 
     async def run_connection(self):
@@ -514,6 +516,12 @@ class BleQtWidget:
         logging.info(f"Connect to: {device['name']} ({device['address']})")
         self.ble_client.start_threading_connect_to_device(device["address"])
 
+    def disconnect_ble(self):
+        if not self.ble_client.running:
+            return
+        logging.info("Disconnect BLE")
+        self.ble_client.stop_client()
+
     def init_wedgets(self, widget, message_label):
         self.parent = widget
         self.message_label = message_label
@@ -549,9 +557,15 @@ class BleQtWidget:
         )
         elements.append(self.device_table)
 
-        # connect ble
         self.ble_connect_button = QPushButton("Connect BLE", widget)
         self.ble_connect_button.clicked.connect(self.connect_ble)
-        elements.append(self.ble_connect_button)
+        self.ble_disconnect_button = QPushButton("Disconnect BLE", widget)
+        self.ble_disconnect_button.clicked.connect(self.disconnect_ble)
+        connection_buttons = QWidget(widget)
+        connection_layout = QHBoxLayout(connection_buttons)
+        connection_layout.setContentsMargins(0, 0, 0, 0)
+        connection_layout.addWidget(self.ble_connect_button)
+        connection_layout.addWidget(self.ble_disconnect_button)
+        elements.append(connection_buttons)
 
         return elements

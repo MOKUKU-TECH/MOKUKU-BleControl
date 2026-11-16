@@ -5,7 +5,7 @@ This example demonstrates how to connect to a MOKUKU device over Bluetooth Low E
 The example shows how to:
 
 * scan for BLE devices
-* connect to a MOKUKU device
+* connect to a MOKUKU device, and disconnect with **Disconnect BLE** (a download in progress stops)
 * write data packets
 * receive notifications
 * send protocol commands
